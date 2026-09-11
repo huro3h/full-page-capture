@@ -1,0 +1,15 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>FPC Fixture (iframe)</title>
+<style>
+  /* 親ページは1pxもスクロールしない。本文は同一オリジンのiframeの中。
+     HackMD の /community/ ビューと同じ構造。 */
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { height:100%; overflow:hidden; }
+  body { font-family: monospace; background:#333; }
+  #chrome { position:absolute; top:0; left:0; right:0; height:50px; background:#888; color:#fff;
+            display:flex; align-items:center; padding-left:12px; }
+  /* 意図した位置・大きさに固定する (テストが座標を前提にするため) */
+  iframe { position:absolute; left:70px; top:50px; width:760px; height:520px; border:0; }
+</style></head><body>
+<div id="chrome">OUTER CHROME (撮影対象外)</div>
+<iframe src="/"></iframe>
+</body></html>

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>撮影結果</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f1f5f9;
+        --panel: #ffffff;
+        --fg: #0f172a;
+        --muted: #64748b;
+        --border: #cbd5e1;
+        --accent: #1f2937;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0f172a;
+          --panel: #1e293b;
+          --fg: #e2e8f0;
+          --muted: #94a3b8;
+          --border: #334155;
+          --accent: #e2e8f0;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font: 13px/1.6 system-ui, -apple-system, "Hiragino Sans", sans-serif;
+      }
+      header {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px 14px;
+        padding: 10px 16px;
+        background: var(--panel);
+        border-bottom: 1px solid var(--border);
+      }
+      #info { color: var(--muted); font-variant-numeric: tabular-nums; }
+      #warn { color: #b45309; }
+      @media (prefers-color-scheme: dark) { #warn { color: #fbbf24; } }
+      .spacer { margin-left: auto; }
+      label { color: var(--muted); display: flex; align-items: center; gap: 6px; }
+      select {
+        padding: 5px 8px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--panel);
+        color: var(--fg);
+        font: inherit;
+      }
+      button {
+        padding: 6px 14px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--accent);
+        color: var(--panel);
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button:disabled { opacity: 0.5; cursor: default; }
+      button.ghost {
+        background: transparent;
+        color: var(--muted);
+        font-weight: 400;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        max-width: 34ch;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      button.ghost:hover { color: var(--fg); border-color: var(--muted); }
+      main { padding: 16px; overflow: auto; }
+      canvas {
+        display: block;
+        max-width: 100%;
+        height: auto;
+        border: 1px solid var(--border);
+        background: #fff;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>撮影結果</strong>
+      <span id="info">合成中…</span>
+      <span id="warn"></span>
+      <span class="spacer"></span>
+      <button id="open-options" class="ghost" title="クリックでファイル名の設定を開く"></button>
+      <label>
+        PDFのページ
+        <select id="pdf-layout">
+          <option value="single">1ページにまとめる</option>
+          <option value="a4">A4縦で分割</option>
+        </select>
+      </label>
+      <button id="save-png" disabled>PNG</button>
+      <button id="save-jpeg" disabled>JPEG</button>
+      <button id="save-pdf" disabled>PDF</button>
+    </header>
+    <main><canvas id="canvas"></canvas></main>
+    <script src="../lib/filename.js"></script>
+    <script src="pdf.js"></script>
+    <script src="result.js"></script>
+  </body>
+</html>

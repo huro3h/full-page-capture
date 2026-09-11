@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>Full Page Capture の設定</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f1f5f9;
+        --panel: #ffffff;
+        --fg: #0f172a;
+        --muted: #64748b;
+        --border: #cbd5e1;
+        --accent: #1f2937;
+        --chip: #e2e8f0;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0f172a;
+          --panel: #1e293b;
+          --fg: #e2e8f0;
+          --muted: #94a3b8;
+          --border: #334155;
+          --accent: #e2e8f0;
+          --chip: #334155;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 32px 24px;
+        background: var(--bg);
+        color: var(--fg);
+        font: 14px/1.7 system-ui, -apple-system, "Hiragino Sans", sans-serif;
+      }
+      main { max-width: 760px; margin: 0 auto; }
+      h1 { font-size: 20px; margin: 0 0 4px; }
+      .lead { color: var(--muted); margin: 0 0 28px; }
+      section {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 20px;
+        margin-bottom: 20px;
+      }
+      h2 { font-size: 15px; margin: 0 0 12px; }
+      .hint { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+      input[type="text"], input[type="number"] {
+        padding: 8px 10px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--bg);
+        color: var(--fg);
+        font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      #template { width: 100%; }
+      #maxLength { width: 90px; }
+      #preview {
+        margin-top: 12px;
+        padding: 10px 12px;
+        border: 1px dashed var(--border);
+        border-radius: 6px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        word-break: break-all;
+      }
+      #preview.invalid { color: #dc2626; }
+      @media (prefers-color-scheme: dark) { #preview.invalid { color: #f87171; } }
+      .tokens { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+      .tokens button {
+        padding: 4px 9px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: var(--chip);
+        color: var(--fg);
+        font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+        cursor: pointer;
+      }
+      .tokens button:hover { border-color: var(--muted); }
+      .tokens button span { color: var(--muted); font-family: inherit; margin-left: 6px; }
+      .presets { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+      .presets button {
+        padding: 6px 12px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--bg);
+        color: var(--fg);
+        font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+        cursor: pointer;
+        text-align: left;
+      }
+      .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      footer { display: flex; align-items: center; gap: 14px; }
+      #reset {
+        padding: 7px 14px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--panel);
+        color: var(--fg);
+        font: inherit;
+        cursor: pointer;
+      }
+      #status { color: var(--muted); font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Full Page Capture の設定</h1>
+      <p class="lead">変更は自動で保存されます。</p>
+
+      <section>
+        <h2>保存するファイル名</h2>
+        <input id="template" type="text" spellcheck="false" />
+        <p class="hint">拡張子 (.png / .jpg / .pdf) は保存時に自動で付きます。</p>
+
+        <div class="tokens" id="tokens"></div>
+
+        <div id="preview"></div>
+
+        <p class="hint">よく使う組み合わせ:</p>
+        <div class="presets" id="presets"></div>
+      </section>
+
+      <section>
+        <h2>ファイル名の長さ</h2>
+        <div class="row">
+          <label for="maxLength">最大</label>
+          <input id="maxLength" type="number" min="10" max="200" step="1" />
+          <span>文字（拡張子を除く）</span>
+        </div>
+        <p class="hint">
+          長いページタイトルをそのまま使うとOSの上限に当たって保存できないことがあるため、
+          ここで切り詰めます。
+        </p>
+      </section>
+
+      <footer>
+        <button id="reset">既定に戻す</button>
+        <span id="status"></span>
+      </footer>
+    </main>
+    <script src="../lib/filename.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>

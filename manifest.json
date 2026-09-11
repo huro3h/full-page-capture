@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "Full Page Capture",
+  "version": "1.0.0",
+  "description": "スクロールが必要なページ全体を1枚のPNGとして撮影する。",
+  "icons": {
+    "16": "assets/icons/16.png",
+    "32": "assets/icons/32.png",
+    "48": "assets/icons/48.png",
+    "128": "assets/icons/128.png"
+  },
+  "action": {
+    "default_title": "ページ全体を撮影",
+    "default_icon": {
+      "16": "assets/icons/16.png",
+      "32": "assets/icons/32.png",
+      "48": "assets/icons/48.png",
+      "128": "assets/icons/128.png"
+    }
+  },
+  "background": {
+    "service_worker": "src/scripts/background.js"
+  },
+  "commands": {
+    "01_capture-full-page": {
+      "description": "ページ全体を撮影"
+    },
+    "02_capture-visible": {
+      "description": "表示されている範囲だけを撮影"
+    }
+  },
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "options_ui": {
+    "page": "src/options/options.html",
+    "open_in_tab": true
+  }
+}

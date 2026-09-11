@@ -1,0 +1,30 @@
+<!doctype html><html><head><meta charset="utf-8"><title>FPC Fixture</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: monospace; padding-top:60px; }
+  /* 上端固定ヘッダー: 完成画像の先頭に1回だけ残ってほしい */
+  #head { position: fixed; top:0; left:0; right:0; height:60px; background:#ff00ff; z-index:10;
+          display:flex; align-items:center; justify-content:center; color:#fff; font-size:24px; }
+  /* sticky サイドバー: 貼り付きを解除して素の位置に1回だけ写ってほしい */
+  #side { position: sticky; top:0; float:right; width:100px; height:200px; background:#00ff00; z-index:9; }
+  /* 宙に浮くウィジェットと下端バー: 1回も写ってほしくない */
+  #widget { position: fixed; top:300px; right:20px; width:120px; height:120px; background:#ffff00; z-index:11; }
+  #foot { position: fixed; bottom:0; left:0; right:0; height:70px; background:#00ffff; z-index:10;
+          display:flex; align-items:center; justify-content:center; }
+  .row { height:100px; display:flex; align-items:center; padding-left:20px; color:#fff; font-size:20px; }
+</style></head><body>
+<div id="head">FIXED HEADER</div>
+<div id="rows"><div id="side"></div></div>
+<div id="widget">CHAT</div>
+<div id="foot">FIXED FOOTER</div>
+<script>
+  const N = 40;
+  const rows = document.getElementById('rows');
+  for (let i = 0; i < N; i++) {
+    const d = document.createElement('div');
+    d.className = 'row';
+    d.style.background = `rgb(${i * 6}, 40, ${200 - i * 4})`;
+    d.textContent = 'ROW ' + i;
+    rows.appendChild(d);
+  }
+</script></body></html>
