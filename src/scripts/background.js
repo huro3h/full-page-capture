@@ -1,6 +1,22 @@
-// 撮影のオーケストレーション。
-// captureVisibleTab は「今見えている範囲」しか撮れないので、
-// コンテンツスクリプトにスクロールさせながら連写し、結果ページで1枚に合成する。
+// 撮影のオーケストレーション。撮り方は2通りある。
+//
+// 高速モード (既定): chrome.debugger 経由で CDP の
+//   Page.captureScreenshot({captureBeyondViewport:true}) を1回呼ぶ。
+//   DevToolsの「Capture full size screenshot」と同じ経路で、桁違いに速い。
+// 連写モード: captureVisibleTab は「今見えている範囲」しか撮れないので、
+//   コンテンツスクリプトにスクロールさせながら連写し、結果ページで1枚に合成する。
+//
+// 高速モードが使えない条件が3つあるため、その場合は自動で連写へ落とす。
+// (判定は fastModeBlocker を参照)
+importScripts("/src/lib/settings.js");
+
+const DEBUGGER_VERSION = "1.3";
+
+// captureBeyondViewport は canvas と同じ 65535px のテクスチャ上限を持つが、
+// 超えたときに例外ではなく「正しいサイズの真っ黒な画像」を無言で返す。
+// さらにデバッガを繋ぐと警告バーのぶんビューポートが縮んで再レイアウトが起きるので、
+// 予測値には余裕を持たせて手前で切る。
+const FAST_MAX_SIDE = 64000;
 
 // captureVisibleTab は 1秒あたり2回までのレート制限がある(MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND)。
 // 制限に当たると lastError が返るだけで撮れないので、最初から余裕を持って間隔を空ける。
@@ -67,6 +83,58 @@ async function run(tab, mode) {
   }
 }
 
+// 高速モードを諦める理由を返す。使えるなら null。
+function fastModeBlocker(meta, dpr) {
+  // CDPはタブの最上位ドキュメントしか撮れない。
+  // スクロールの主体が中の要素やiframeなら連写でないと中身が撮れない。
+  if (meta.scrollerKind !== "document") {
+    return meta.scrollerKind === "iframe"
+      ? "本文がiframeの中にあるため"
+      : "本文がページ内のスクロール領域にあるため";
+  }
+  const w = meta.pageW * dpr;
+  const h = meta.pageH * dpr;
+  if (w > FAST_MAX_SIDE || h > FAST_MAX_SIDE) {
+    return `画像が大きすぎるため (${Math.round(w)}×${Math.round(h)}px)`;
+  }
+  return null;
+}
+
+async function captureFast(tab, meta, dpr) {
+  const target = { tabId: tab.id };
+  await chrome.debugger.attach(target, DEBUGGER_VERSION);
+  let dataUrl;
+  try {
+    const shot = await chrome.debugger.sendCommand(target, "Page.captureScreenshot", {
+      format: "png",
+      captureBeyondViewport: true,
+    });
+    if (!shot || !shot.data) throw new Error("画像が返りませんでした");
+    dataUrl = "data:image/png;base64," + shot.data;
+  } finally {
+    await chrome.debugger.detach(target).catch(() => {});
+  }
+
+  // 実際に返ってきた画像の寸法を正とする。デバッガの警告バーでビューポートが縮み、
+  // 予測した文書サイズとずれることがあるため。
+  const size = await imageSize(dataUrl);
+  const pageW = size.width / dpr;
+  const pageH = size.height / dpr;
+  return {
+    tiles: [{ x: 0, y: 0, dataUrl }],
+    meta: {
+      ...meta,
+      dpr,
+      method: "fast",
+      pageW,
+      pageH,
+      clip: { x: 0, y: 0, w: pageW, h: pageH },
+      grew: false,
+      truncated: false,
+    },
+  };
+}
+
 async function capture(tab, mode) {
   const tabId = tab.id;
 
@@ -87,8 +155,33 @@ async function capture(tab, mode) {
     if (mode === "visible") {
       return {
         tiles: [{ x: 0, y: 0, dataUrl: probe }],
-        meta: { ...meta, dpr, pageW: meta.viewW, pageH: meta.viewH, grew: false, truncated: false },
+        meta: {
+          ...meta,
+          dpr,
+          method: "visible",
+          pageW: meta.viewW,
+          pageH: meta.viewH,
+          grew: false,
+          truncated: false,
+        },
       };
+    }
+
+    const { captureMode } = await loadSettings();
+    let fallbackReason = null;
+    if (captureMode === "fast") {
+      fallbackReason = fastModeBlocker(meta, dpr);
+      if (!fallbackReason) {
+        // CDPは1枚ずつ制御できないので、撮る前に固定要素そのものを解除しておく。
+        // (captureBeyondViewport は fixed / sticky を画面数ぶん繰り返すことがある)
+        await send(tabId, { type: "flatten" });
+        await sleep(SETTLE_MS);
+        try {
+          return await captureFast(tab, meta, dpr);
+        } catch (error) {
+          fallbackReason = `デバッガ撮影に失敗したため (${error?.message || error})`;
+        }
+      }
     }
 
     const tiles = [];
@@ -139,7 +232,7 @@ async function capture(tab, mode) {
 
     return {
       tiles,
-      meta: { ...meta, dpr, pageW: targetW, pageH: targetH, grew, truncated },
+      meta: { ...meta, dpr, method: "scroll", fallbackReason, pageW: targetW, pageH: targetH, grew, truncated },
     };
   } finally {
     await send(tabId, { type: "restore" }).catch(() => {});

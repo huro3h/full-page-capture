@@ -90,10 +90,18 @@ async function main() {
 
   if (meta.scrollerKind === "iframe") notes.push("ページ内のiframeを撮影しました");
   else if (meta.scrollerKind === "element") notes.push("ページ内のスクロール領域を撮影しました");
+  if (meta.fallbackReason) notes.push(`高速モードが使えず連写しました (${meta.fallbackReason})`);
   if (meta.grew) notes.push("撮影中にページが伸びました(開始時点の高さで打ち切り)");
   if (meta.truncated) notes.push("タイル数の上限に達したため途中で打ち切りました");
+  // 高速モードは上限を超えると無言で全面黒を返す。手前で弾いてはいるが、
+  // 掴んでしまった場合に気づかず保存させないよう最後に確かめる。
+  if (meta.method === "fast" && isBlank(ctx, width, height)) {
+    notes.push("画像が真っ黒です。設定で撮影方法を「連写」に変えて撮り直してください");
+  }
 
-  summary = `${width} × ${height} px / ${count}枚 / ${meta.dpr.toFixed(2)}x`;
+  const methodLabel =
+    meta.method === "fast" ? "高速" : meta.method === "visible" ? "表示範囲" : `連写 ${count}枚`;
+  summary = `${width} × ${height} px / ${methodLabel} / ${meta.dpr.toFixed(2)}x`;
   info.textContent = summary;
   warn.textContent = notes.join(" · ");
   captureMeta = { title: meta.title, url: meta.url, width, height };
@@ -103,12 +111,25 @@ async function main() {
   setBusy(false);
 }
 
+// 縦に散らした点がすべて純黒なら、撮影に失敗した画像とみなす。
+// 本当に全面が真っ黒なページはまず無く、外したとしても出るのは警告文だけ。
+function isBlank(ctx, width, height) {
+  const x = Math.floor(width / 2);
+  const samples = 24;
+  for (let i = 0; i < samples; i++) {
+    const y = Math.min(height - 1, Math.floor((height * i) / samples) + 8);
+    const [r, g, b] = ctx.getImageData(x, y, 1, 1).data;
+    if (r !== 0 || g !== 0 || b !== 0) return false;
+  }
+  return true;
+}
+
 // ファイル名は設定ページのテンプレートから作る。
 // 日時の変数には撮影時刻 (capturedAt) を渡す。展開のたびに現在時刻を使うと、
 // 同じ撮影結果をPNG→PDFと続けて保存しただけで名前がずれてしまうため。
 async function refreshFilename() {
   if (!captureMeta) return;
-  const settings = await loadFilenameSettings();
+  const settings = await loadSettings();
   baseName = buildFilename(settings.template, captureMeta, settings.maxLength, capturedAt);
   openOptions.textContent = baseName;
   openOptions.title = `ファイル名: ${baseName}\nクリックで設定を開く`;

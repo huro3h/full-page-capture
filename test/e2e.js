@@ -12,7 +12,8 @@ const os = require("os");
 const path = require("path");
 const fs = require("fs");
 
-const BRAVE = "/Applications/Brave Browser Nightly.app/Contents/MacOS/Brave Browser Nightly";
+const BRAVE =
+  "/Applications/Brave Browser Nightly.app/Contents/MacOS/Brave Browser Nightly";
 const SRC = path.resolve(__dirname, "..");
 const PORT = 8931;
 const ORIGIN = `http://localhost:${PORT}`;
@@ -25,8 +26,22 @@ const ROWS = 40;
 
 // contentW = 撮影対象の幅。直接撮るならビューポート幅、iframeならiframeの幅。
 const SCENARIOS = [
-  { name: "通常のページ", url: `${ORIGIN}/`, contentW: VIEW_W, kind: "document", extras: true },
-  { name: "同一オリジンiframe", url: `${ORIGIN}/iframe`, contentW: 760, kind: "iframe", extras: false },
+  {
+    name: "通常のページ",
+    url: `${ORIGIN}/`,
+    contentW: VIEW_W,
+    kind: "document",
+    method: "高速",
+    extras: true,
+  },
+  {
+    name: "同一オリジンiframe",
+    url: `${ORIGIN}/iframe`,
+    contentW: 760,
+    kind: "iframe",
+    method: "連写",
+    extras: false,
+  },
 ];
 
 function startServer() {
@@ -58,12 +73,16 @@ function buildTestExtension() {
 
 const failures = [];
 function report(label, ok, detail) {
-  console.log(`${ok ? "  ok  " : "  NG  "} ${label}${ok || !detail ? "" : "  " + detail}`);
+  console.log(
+    `${ok ? "  ok  " : "  NG  "} ${label}${ok || !detail ? "" : "  " + detail}`,
+  );
   if (!ok) failures.push(label);
 }
 
 const fmtSize = (n) =>
-  n > 1024 * 1024 ? (n / 1024 / 1024).toFixed(1) + "MB" : Math.round(n / 1024) + "KB";
+  n > 1024 * 1024
+    ? (n / 1024 / 1024).toFixed(1) + "MB"
+    : Math.round(n / 1024) + "KB";
 
 // 撮影を実行し、結果ページが使える状態になるまで待つ。
 async function capture(context, sw, url) {
@@ -82,9 +101,13 @@ async function capture(context, sw, url) {
 
   const result = await resultPromise;
   await result.waitForLoadState("load");
-  await result.waitForFunction(() => !document.getElementById("save-png").disabled, null, {
-    timeout: 180000,
-  });
+  await result.waitForFunction(
+    () => !document.getElementById("save-png").disabled,
+    null,
+    {
+      timeout: 180000,
+    },
+  );
   return result;
 }
 
@@ -144,21 +167,50 @@ async function checkImage(result, scenario) {
       widget: count(right, (r, g, b) => r > 240 && g > 240 && b < 20),
       side: count(right, (r, g, b) => r < 20 && g > 240 && b < 20),
       // 外側のページのグレー(#888)。iframeのクリップが効いていれば1回も出ない。
-      outer: count(mid, (r, g, b) => Math.abs(r - 136) < 6 && Math.abs(g - 136) < 6 && Math.abs(b - 136) < 6),
+      outer: count(
+        mid,
+        (r, g, b) =>
+          Math.abs(r - 136) < 6 &&
+          Math.abs(g - 136) < 6 &&
+          Math.abs(b - 136) < 6,
+      ),
     };
   });
-  report(`[${scenario.name}] 固定ヘッダーは1回だけ写る`, bands.header === 1, `実際 ${bands.header}`);
-  report(`[${scenario.name}] 固定フッターは写らない`, bands.footer === 0, `実際 ${bands.footer}`);
-  report(`[${scenario.name}] 浮遊ウィジェットは写らない`, bands.widget === 0, `実際 ${bands.widget}`);
-  report(`[${scenario.name}] stickyサイドバーは1回だけ写る`, bands.side === 1, `実際 ${bands.side}`);
+  report(
+    `[${scenario.name}] 固定ヘッダーは1回だけ写る`,
+    bands.header === 1,
+    `実際 ${bands.header}`,
+  );
+  report(
+    `[${scenario.name}] 固定フッターは写らない`,
+    bands.footer === 0,
+    `実際 ${bands.footer}`,
+  );
+  report(
+    `[${scenario.name}] 浮遊ウィジェットは写らない`,
+    bands.widget === 0,
+    `実際 ${bands.widget}`,
+  );
+  report(
+    `[${scenario.name}] stickyサイドバーは1回だけ写る`,
+    bands.side === 1,
+    `実際 ${bands.side}`,
+  );
   if (scenario.kind === "iframe") {
-    report(`[${scenario.name}] 外側のページが写り込まない`, bands.outer === 0, `実際 ${bands.outer}`);
+    report(
+      `[${scenario.name}] 外側のページが写り込まない`,
+      bands.outer === 0,
+      `実際 ${bands.outer}`,
+    );
   }
 }
 
-(async () => {
-  const server = await startServer();
-  const ext = buildTestExtension();
+// シナリオごとにブラウザを立て直す。
+// 高速モードの chrome.debugger.attach/detach は Playwright のビューポート
+// エミュレーション(Emulation.setDeviceMetricsOverride)を巻き添えで解除してしまい、
+// 同じブラウザで続けて撮ると captureVisibleTab の倍率がずれる。
+// 製品側の問題ではないが、テストの前提が崩れるので分離する。
+async function withBrowser(ext, fn) {
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "fpc-e2e-"));
   const context = await chromium.launchPersistentContext(userDataDir, {
     executablePath: BRAVE,
@@ -166,174 +218,278 @@ async function checkImage(result, scenario) {
     viewport: { width: VIEW_W, height: VIEW_H },
     args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`],
   });
-
-  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "fpc-out-"));
   try {
     const sw =
       context.serviceWorkers()[0] ||
       (await context.waitForEvent("serviceworker", { timeout: 20000 }));
+    return await fn(context, sw);
+  } finally {
+    await context.close();
+  }
+}
+
+(async () => {
+  const server = await startServer();
+  const ext = buildTestExtension();
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "fpc-out-"));
+  try {
+    // 高速モードを諦める条件。実撮影は重いので判定関数を直接呼ぶ。
+    await withBrowser(ext, async (_context, sw) => {
+      const blockers = await sw.evaluate(() => ({
+        ok: fastModeBlocker(
+          { scrollerKind: "document", pageW: 900, pageH: 4060 },
+          2,
+        ),
+        tall: fastModeBlocker(
+          { scrollerKind: "document", pageW: 900, pageH: 40000 },
+          2,
+        ),
+        iframe: fastModeBlocker(
+          { scrollerKind: "iframe", pageW: 900, pageH: 4060 },
+          2,
+        ),
+        element: fastModeBlocker(
+          { scrollerKind: "element", pageW: 900, pageH: 4060 },
+          2,
+        ),
+      }));
+      report(
+        "通常サイズは高速モードを使う",
+        blockers.ok === null,
+        JSON.stringify(blockers.ok),
+      );
+      report(
+        "64000pxを超えると高速モードを諦める",
+        typeof blockers.tall === "string" &&
+          blockers.tall.includes("大きすぎる"),
+        JSON.stringify(blockers.tall),
+      );
+      report(
+        "iframeが対象なら高速モードを諦める",
+        typeof blockers.iframe === "string" &&
+          blockers.iframe.includes("iframe"),
+        JSON.stringify(blockers.iframe),
+      );
+      report(
+        "スクロール領域が対象なら高速モードを諦める",
+        typeof blockers.element === "string" &&
+          blockers.element.includes("スクロール領域"),
+        JSON.stringify(blockers.element),
+      );
+    });
 
     for (const scenario of SCENARIOS) {
-      const page = await context.newPage();
-      await page.goto(scenario.url, { waitUntil: "load" });
-      await page.waitForTimeout(800);
+      await withBrowser(ext, async (context, sw) => {
+        const page = await context.newPage();
+        await page.goto(scenario.url, { waitUntil: "load" });
+        await page.waitForTimeout(800);
 
-      const result = await capture(context, sw, scenario.url);
-      console.log(`\n[${scenario.name}] ${await result.textContent("#info")}`);
+        const result = await capture(context, sw, scenario.url);
+        const info = await result.textContent("#info");
+        console.log(`\n[${scenario.name}] ${info}`);
 
-      const warn = await result.textContent("#warn");
-      report(
-        `[${scenario.name}] スクロール対象を ${scenario.kind} と判定`,
-        scenario.kind === "iframe" ? warn.includes("iframe") : warn === "",
-        `warn="${warn}"`,
-      );
-      await checkImage(result, scenario);
+        report(
+          `[${scenario.name}] ${scenario.method}モードで撮影される`,
+          info.includes(scenario.method),
+          `info="${info}"`,
+        );
 
-      const restored = await page.evaluate(() => {
-        const doc = document.querySelector("iframe")?.contentDocument ?? document;
-        const scroller = doc.scrollingElement || doc.documentElement;
-        return {
-          scrollY: scroller.scrollTop,
-          styleTag: !!doc.getElementById("__fpc-style"),
-          headPos: getComputedStyle(doc.getElementById("head")).position,
-          footVis: getComputedStyle(doc.getElementById("foot")).visibility,
-          sideTop: getComputedStyle(doc.getElementById("side")).top,
+        const warn = await result.textContent("#warn");
+        report(
+          `[${scenario.name}] スクロール対象を ${scenario.kind} と判定`,
+          scenario.kind === "iframe" ? warn.includes("iframe") : warn === "",
+          `warn="${warn}"`,
+        );
+        if (scenario.kind === "iframe") {
+          report(
+            `[${scenario.name}] 連写へ切り替えた理由が表示される`,
+            warn.includes("高速モードが使えず"),
+            `warn="${warn}"`,
+          );
+        }
+        await checkImage(result, scenario);
+
+        const restored = await page.evaluate(() => {
+          const doc =
+            document.querySelector("iframe")?.contentDocument ?? document;
+          const scroller = doc.scrollingElement || doc.documentElement;
+          return {
+            scrollY: scroller.scrollTop,
+            styleTag: !!doc.getElementById("__fpc-style"),
+            headPos: getComputedStyle(doc.getElementById("head")).position,
+            footVis: getComputedStyle(doc.getElementById("foot")).visibility,
+            sideTop: getComputedStyle(doc.getElementById("side")).top,
+          };
+        });
+        report(
+          `[${scenario.name}] 撮影後にページが復元される`,
+          restored.scrollY === 0 &&
+            !restored.styleTag &&
+            restored.headPos === "fixed" &&
+            restored.footVis === "visible" &&
+            restored.sideTop === "0px",
+          JSON.stringify(restored),
+        );
+
+        if (!scenario.extras) {
+          await result.close();
+          await page.close();
+          return;
+        }
+
+        // 保存形式とファイル名は通常ページのケースだけで確認する。
+        const save = async (buttonId, setup, tag) => {
+          if (setup) await setup();
+          const [download] = await Promise.all([
+            result.waitForEvent("download", { timeout: 120000 }),
+            result.click("#" + buttonId),
+          ]);
+          const file = path.join(
+            outDir,
+            (tag ? tag + "-" : "") + download.suggestedFilename(),
+          );
+          await download.saveAs(file);
+          await result.waitForFunction(
+            () => !document.getElementById("save-png").disabled,
+            null,
+            {
+              timeout: 120000,
+            },
+          );
+          return { file, bytes: fs.readFileSync(file) };
         };
-      });
-      report(
-        `[${scenario.name}] 撮影後にページが復元される`,
-        restored.scrollY === 0 &&
-          !restored.styleTag &&
-          restored.headPos === "fixed" &&
-          restored.footVis === "visible" &&
-          restored.sideTop === "0px",
-        JSON.stringify(restored),
-      );
 
-      if (!scenario.extras) {
+        const png = await save("save-png");
+        report(
+          `PNGで保存できる (${fmtSize(png.bytes.length)})`,
+          png.file.endsWith(".png") &&
+            png.bytes
+              .subarray(0, 8)
+              .equals(
+                Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+              ),
+        );
+
+        const jpeg = await save("save-jpeg");
+        report(
+          `JPEGで保存できる (${fmtSize(jpeg.bytes.length)})`,
+          jpeg.file.endsWith(".jpg") &&
+            jpeg.bytes.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff])),
+        );
+
+        report(
+          "PDFの既定は「1ページにまとめる」",
+          (await result.inputValue("#pdf-layout")) === "single",
+          `実際 ${await result.inputValue("#pdf-layout")}`,
+        );
+
+        const pdfA4 = await save(
+          "save-pdf",
+          () => result.selectOption("#pdf-layout", "a4"),
+          "a4",
+        );
+        const a4Count = Number(
+          /\/Count (\d+)/.exec(pdfA4.bytes.toString("latin1"))?.[1],
+        );
+        // 1800x8120px を幅595.28ptへ縮めると 1ページ 2545px 相当 → 4ページ
+        report(
+          `PDF(A4分割)で保存できる (${a4Count}ページ, ${fmtSize(pdfA4.bytes.length)})`,
+          pdfA4.bytes.subarray(0, 5).toString("latin1") === "%PDF-" &&
+            a4Count === 4,
+          `count=${a4Count}`,
+        );
+
+        const pdfSingle = await save(
+          "save-pdf",
+          () => result.selectOption("#pdf-layout", "single"),
+          "single",
+        );
+        const singleCount = Number(
+          /\/Count (\d+)/.exec(pdfSingle.bytes.toString("latin1"))?.[1],
+        );
+        report(
+          `PDF(1ページ)で保存できる (${singleCount}ページ, ${fmtSize(pdfSingle.bytes.length)})`,
+          pdfSingle.bytes.subarray(0, 5).toString("latin1") === "%PDF-" &&
+            singleCount === 1,
+          `count=${singleCount}`,
+        );
+
+        // ファイル名テンプレート
+        await sw.evaluate(() =>
+          chrome.storage.sync.set({
+            template: "%DOMAIN%-%TITLE%-%YEAR%%MONTH%%DAY%",
+            maxLength: 100,
+          }),
+        );
+        await result.waitForFunction(
+          () =>
+            document
+              .getElementById("open-options")
+              .textContent.startsWith("localhost-"),
+          null,
+          { timeout: 20000 },
+        );
+        const templated = await save("save-png", null, "tpl");
+        const stamp = new Date();
+        const expected =
+          `localhost-FPC Fixture-${stamp.getFullYear()}` +
+          String(stamp.getMonth() + 1).padStart(2, "0") +
+          String(stamp.getDate()).padStart(2, "0") +
+          ".png";
+        report(
+          `テンプレートが保存名に反映される (${path.basename(templated.file).replace(/^tpl-/, "")})`,
+          path.basename(templated.file) === "tpl-" + expected,
+          `期待 ${expected}`,
+        );
+
+        await sw.evaluate(() =>
+          chrome.storage.sync.set({ template: "%TITLE%", maxLength: 12 }),
+        );
+        await result.evaluate(() => {
+          captureMeta.title = 'a/b:c*d?e"f<g>h|i とても長いタイトル';
+          return refreshFilename();
+        });
+        const shortName = await result.textContent("#open-options");
+        report(
+          `禁止文字を除去して指定文字数に収める ("${shortName}")`,
+          shortName.length <= 12 && !/[\\/:*?"<>|]/.test(shortName),
+          `長さ ${shortName.length}`,
+        );
+
+        // 長すぎて1ページに収まらない場合は A4分割へ退避するか。
+        // canvasの中身を捨てる操作なので、他の検証をすべて終えてから行う。
+        const fallback = await result.evaluate(() => {
+          const c = document.getElementById("canvas");
+          c.height = 70000; // 幅595ptに縮めても14400ptを超える高さ
+          updatePdfLayoutOptions();
+          const option = document.querySelector(
+            '#pdf-layout option[value="single"]',
+          );
+          return {
+            value: document.getElementById("pdf-layout").value,
+            disabled: option.disabled,
+          };
+        });
+        report(
+          "1ページに収まらない場合はA4分割へ退避する",
+          fallback.value === "a4" && fallback.disabled === true,
+          JSON.stringify(fallback),
+        );
+
+        // 次のシナリオに影響しないよう既定へ戻す
+        await sw.evaluate(() => chrome.storage.sync.clear());
         await result.close();
         await page.close();
-        continue;
-      }
-
-      // 保存形式とファイル名は通常ページのケースだけで確認する。
-      const save = async (buttonId, setup, tag) => {
-        if (setup) await setup();
-        const [download] = await Promise.all([
-          result.waitForEvent("download", { timeout: 120000 }),
-          result.click("#" + buttonId),
-        ]);
-        const file = path.join(outDir, (tag ? tag + "-" : "") + download.suggestedFilename());
-        await download.saveAs(file);
-        await result.waitForFunction(() => !document.getElementById("save-png").disabled, null, {
-          timeout: 120000,
-        });
-        return { file, bytes: fs.readFileSync(file) };
-      };
-
-      const png = await save("save-png");
-      report(
-        `PNGで保存できる (${fmtSize(png.bytes.length)})`,
-        png.file.endsWith(".png") &&
-          png.bytes
-            .subarray(0, 8)
-            .equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
-      );
-
-      const jpeg = await save("save-jpeg");
-      report(
-        `JPEGで保存できる (${fmtSize(jpeg.bytes.length)})`,
-        jpeg.file.endsWith(".jpg") && jpeg.bytes.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff])),
-      );
-
-      report(
-        "PDFの既定は「1ページにまとめる」",
-        (await result.inputValue("#pdf-layout")) === "single",
-        `実際 ${await result.inputValue("#pdf-layout")}`,
-      );
-
-      const pdfA4 = await save("save-pdf", () => result.selectOption("#pdf-layout", "a4"), "a4");
-      const a4Count = Number(/\/Count (\d+)/.exec(pdfA4.bytes.toString("latin1"))?.[1]);
-      // 1800x8120px を幅595.28ptへ縮めると 1ページ 2545px 相当 → 4ページ
-      report(
-        `PDF(A4分割)で保存できる (${a4Count}ページ, ${fmtSize(pdfA4.bytes.length)})`,
-        pdfA4.bytes.subarray(0, 5).toString("latin1") === "%PDF-" && a4Count === 4,
-        `count=${a4Count}`,
-      );
-
-      const pdfSingle = await save(
-        "save-pdf",
-        () => result.selectOption("#pdf-layout", "single"),
-        "single",
-      );
-      const singleCount = Number(/\/Count (\d+)/.exec(pdfSingle.bytes.toString("latin1"))?.[1]);
-      report(
-        `PDF(1ページ)で保存できる (${singleCount}ページ, ${fmtSize(pdfSingle.bytes.length)})`,
-        pdfSingle.bytes.subarray(0, 5).toString("latin1") === "%PDF-" && singleCount === 1,
-        `count=${singleCount}`,
-      );
-
-      // ファイル名テンプレート
-      await sw.evaluate(() =>
-        chrome.storage.sync.set({ template: "%DOMAIN%-%TITLE%-%YEAR%%MONTH%%DAY%", maxLength: 100 }),
-      );
-      await result.waitForFunction(
-        () => document.getElementById("open-options").textContent.startsWith("localhost-"),
-        null,
-        { timeout: 20000 },
-      );
-      const templated = await save("save-png", null, "tpl");
-      const stamp = new Date();
-      const expected =
-        `localhost-FPC Fixture-${stamp.getFullYear()}` +
-        String(stamp.getMonth() + 1).padStart(2, "0") +
-        String(stamp.getDate()).padStart(2, "0") +
-        ".png";
-      report(
-        `テンプレートが保存名に反映される (${path.basename(templated.file).replace(/^tpl-/, "")})`,
-        path.basename(templated.file) === "tpl-" + expected,
-        `期待 ${expected}`,
-      );
-
-      await sw.evaluate(() => chrome.storage.sync.set({ template: "%TITLE%", maxLength: 12 }));
-      await result.evaluate(() => {
-        captureMeta.title = 'a/b:c*d?e"f<g>h|i とても長いタイトル';
-        return refreshFilename();
       });
-      const shortName = await result.textContent("#open-options");
-      report(
-        `禁止文字を除去して指定文字数に収める ("${shortName}")`,
-        shortName.length <= 12 && !/[\\/:*?"<>|]/.test(shortName),
-        `長さ ${shortName.length}`,
-      );
-
-      // 長すぎて1ページに収まらない場合は A4分割へ退避するか。
-      // canvasの中身を捨てる操作なので、他の検証をすべて終えてから行う。
-      const fallback = await result.evaluate(() => {
-        const c = document.getElementById("canvas");
-        c.height = 70000; // 幅595ptに縮めても14400ptを超える高さ
-        updatePdfLayoutOptions();
-        const option = document.querySelector('#pdf-layout option[value="single"]');
-        return { value: document.getElementById("pdf-layout").value, disabled: option.disabled };
-      });
-      report(
-        "1ページに収まらない場合はA4分割へ退避する",
-        fallback.value === "a4" && fallback.disabled === true,
-        JSON.stringify(fallback),
-      );
-
-      // 次のシナリオに影響しないよう既定へ戻す
-      await sw.evaluate(() => chrome.storage.sync.clear());
-      await result.close();
-      await page.close();
     }
 
     console.log("\n書き出したファイル: " + outDir);
   } finally {
-    await context.close();
     server.close();
   }
 
-  console.log(failures.length === 0 ? "\nPASS" : `\nFAIL (${failures.length}件)`);
+  console.log(
+    failures.length === 0 ? "\nPASS" : `\nFAIL (${failures.length}件)`,
+  );
   process.exit(failures.length === 0 ? 0 : 1);
 })();

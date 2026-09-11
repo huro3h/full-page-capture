@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Full Page Capture",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "スクロールが必要なページ全体を1枚のPNGとして撮影する。",
   "icons": {
     "16": "assets/icons/16.png",
@@ -32,7 +32,8 @@
   "permissions": [
     "activeTab",
     "scripting",
-    "storage"
+    "storage",
+    "debugger"
   ],
   "options_ui": {
     "page": "src/options/options.html",

@@ -1,8 +1,11 @@
-// ファイル名テンプレートの展開。オプションページと結果ページの両方から使う。
-// classic script として読み込むので、グローバルに関数を置く。
+// 設定の既定値とファイル名テンプレートの展開。
+// オプションページ・結果ページ・service worker の3か所から使うので、
+// classic script として読み込めるようグローバルに関数を置く。
 
-const FILENAME_DEFAULTS = {
-  // 既定は「ページタイトル_日付-時刻」。
+const SETTINGS_DEFAULTS = {
+  // 撮影方法。"fast" = chrome.debugger 経由の1回撮り、"scroll" = スクロール連写。
+  captureMode: "fast",
+  // ファイル名の既定は「ページタイトル_日付-時刻」。
   template: "%TITLE%_%DATE%-%TIME%",
   maxLength: 100,
 };
@@ -81,7 +84,7 @@ function filenameValues(meta, now = new Date()) {
 function buildFilename(template, meta, maxLength, now) {
   const values = filenameValues(meta, now);
   // 値そのものは個別にサニタイズする。テンプレート側の区切り文字を巻き込まないため。
-  let name = String(template || FILENAME_DEFAULTS.template).replace(
+  let name = String(template || SETTINGS_DEFAULTS.template).replace(
     /%[A-Z]+%/g,
     (token) => (token in values ? sanitizeFilenamePart(values[token]) : token),
   );
@@ -91,18 +94,18 @@ function buildFilename(template, meta, maxLength, now) {
   // 先頭・末尾のドットはOSによって隠しファイル扱いや拒否になる。
   name = name.replace(/^\.+/, "").replace(/\.+$/, "");
 
-  const limit = Number(maxLength) > 0 ? Number(maxLength) : FILENAME_DEFAULTS.maxLength;
+  const limit = Number(maxLength) > 0 ? Number(maxLength) : SETTINGS_DEFAULTS.maxLength;
   if (name.length > limit) name = name.slice(0, limit).trim();
 
   if (!name || RESERVED.test(name)) name = "capture";
   return name;
 }
 
-async function loadFilenameSettings() {
+async function loadSettings() {
   try {
-    const stored = await chrome.storage.sync.get(FILENAME_DEFAULTS);
-    return { ...FILENAME_DEFAULTS, ...stored };
+    const stored = await chrome.storage.sync.get(SETTINGS_DEFAULTS);
+    return { ...SETTINGS_DEFAULTS, ...stored };
   } catch {
-    return { ...FILENAME_DEFAULTS };
+    return { ...SETTINGS_DEFAULTS };
   }
 }

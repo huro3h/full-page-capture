@@ -53,6 +53,16 @@
         color: var(--fg);
         font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
       }
+      select {
+        padding: 8px 10px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--bg);
+        color: var(--fg);
+        font: inherit;
+      }
+      ul.hint { margin: 6px 0 0; padding-left: 1.4em; }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; }
       #template { width: 100%; }
       #maxLength { width: 90px; }
       #preview {
@@ -108,6 +118,28 @@
       <p class="lead">変更は自動で保存されます。</p>
 
       <section>
+        <h2>撮影方法</h2>
+        <div class="row">
+          <select id="captureMode">
+            <option value="fast">高速 — 1回で撮る（既定）</option>
+            <option value="scroll">連写 — スクロールしながら撮る</option>
+          </select>
+        </div>
+        <p class="hint">
+          高速モードは Chrome の開発者ツールと同じ仕組み（<code>chrome.debugger</code>）で
+          ページ全体を1回で撮ります。長いページで10倍以上速くなります。
+          撮影中だけ「デバッグしています」という通知バーがブラウザ上部に表示されます。
+        </p>
+        <p class="hint">
+          次の場合は高速モードでも自動的に連写へ切り替わります（結果ページに理由が出ます）。
+        </p>
+        <ul class="hint">
+          <li>本文がiframeやページ内のスクロール領域にある場合（例: HackMD の /community/ ビュー）</li>
+          <li>画像の辺が 64000px を超える場合（この上限を超えると撮影結果が真っ黒になるため）</li>
+        </ul>
+      </section>
+
+      <section>
         <h2>保存するファイル名</h2>
         <input id="template" type="text" spellcheck="false" />
         <p class="hint">拡張子 (.png / .jpg / .pdf) は保存時に自動で付きます。</p>
@@ -138,7 +170,7 @@
         <span id="status"></span>
       </footer>
     </main>
-    <script src="../lib/filename.js"></script>
+    <script src="../lib/settings.js"></script>
     <script src="options.js"></script>
   </body>
 </html>

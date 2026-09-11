@@ -19,6 +19,8 @@
   let savedStyles = [];
   /** @type {{el: HTMLElement, anchorTop: boolean}[]} */
   let fixedElements = [];
+  /** @type {HTMLElement[]} */
+  let stickyElements = [];
   // スクロールの主体。ドキュメントとは限らない。
   let target = null;
   let origScroll = { x: 0, y: 0 };
@@ -192,6 +194,7 @@
       else fixed.push({ el, anchorTop: rect.top <= 8 && rect.width >= vw * 0.6 });
     }
 
+    stickyElements = sticky;
     for (const el of sticky) {
       const cs = getComputedStyle(el);
       if (cs.top !== "auto") setStyle(el, "top", FAR);
@@ -247,6 +250,7 @@
     if (!prepared) return { ok: true };
     for (const { el } of fixedElements) el.style.removeProperty("visibility");
     fixedElements = [];
+    stickyElements = [];
     restoreStyles();
     if (target) {
       target.doc.getElementById(STYLE_ID)?.remove();
@@ -254,6 +258,29 @@
       target.scroller.scrollTop = origScroll.y;
     }
     prepared = false;
+    return { ok: true };
+  }
+
+  // 高速モード(CDPの captureBeyondViewport)用の下ごしらえ。
+  //
+  // captureBeyondViewport は実装によって「ビューポートを全高に広げて1回描く」場合と
+  // 「画面ぶんずつ区切って描いて繋ぐ」場合があり、後者になると fixed / sticky が
+  // 画面数ぶん繰り返し焼き付く。どちらになるかは実行ごとに変わる(実測で3回中2回が繰り返し)。
+  // 連写モードのように1枚ずつ制御できないので、撮る前に固定をやめさせるしかない。
+  function flatten() {
+    for (const { el, anchorTop } of fixedElements) {
+      // 上端のヘッダーは absolute にして文書の先頭へ流す。
+      // 消さずに済み、かつ繰り返し描かれることもなくなる。
+      if (anchorTop) setStyle(el, "position", "absolute");
+      else el.style.setProperty("visibility", "hidden", "important");
+    }
+    // sticky は基準位置を飛ばすだけでは区切り描画に耐えないので、static まで落とす。
+    // sticky は通常フローでの配置は static と同じなので、レイアウトは動かない。
+    for (const el of stickyElements) setStyle(el, "position", "static");
+
+    const s = target.scroller;
+    s.scrollLeft = 0;
+    s.scrollTop = 0;
     return { ok: true };
   }
 
@@ -281,6 +308,10 @@
     if (!message || message.__fpc !== true) return;
     if (message.type === "prepare") {
       sendResponse(prepare(message.mode));
+      return;
+    }
+    if (message.type === "flatten") {
+      sendResponse(flatten());
       return;
     }
     if (message.type === "restore") {

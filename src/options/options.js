@@ -16,6 +16,7 @@ const PRESETS = [
   { label: "サイズ付き", template: "%TITLE%_%WIDTH%x%HEIGHT%" },
 ];
 
+const captureModeSelect = document.getElementById("captureMode");
 const templateInput = document.getElementById("template");
 const maxLengthInput = document.getElementById("maxLength");
 const preview = document.getElementById("preview");
@@ -42,8 +43,12 @@ function renderPreview() {
 }
 
 async function save() {
-  const maxLength = Math.min(200, Math.max(10, Number(maxLengthInput.value) || FILENAME_DEFAULTS.maxLength));
-  await chrome.storage.sync.set({ template: templateInput.value, maxLength });
+  const maxLength = Math.min(200, Math.max(10, Number(maxLengthInput.value) || SETTINGS_DEFAULTS.maxLength));
+  await chrome.storage.sync.set({
+    captureMode: captureModeSelect.value,
+    template: templateInput.value,
+    maxLength,
+  });
   renderPreview();
   flashStatus("保存しました");
 }
@@ -88,9 +93,12 @@ function renderPresets() {
   }
 }
 
+captureModeSelect.addEventListener("change", () => void save());
+
 document.getElementById("reset").addEventListener("click", async () => {
-  templateInput.value = FILENAME_DEFAULTS.template;
-  maxLengthInput.value = FILENAME_DEFAULTS.maxLength;
+  captureModeSelect.value = SETTINGS_DEFAULTS.captureMode;
+  templateInput.value = SETTINGS_DEFAULTS.template;
+  maxLengthInput.value = SETTINGS_DEFAULTS.maxLength;
   await save();
 });
 
@@ -104,7 +112,8 @@ maxLengthInput.addEventListener("input", () => {
 });
 
 (async () => {
-  const settings = await loadFilenameSettings();
+  const settings = await loadSettings();
+  captureModeSelect.value = settings.captureMode;
   templateInput.value = settings.template;
   maxLengthInput.value = settings.maxLength;
   renderTokens();

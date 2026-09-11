@@ -5,6 +5,57 @@ description: full-page-capture (ページ全体スクリーンショット拡張
 
 # full-page-capture 開発メモ
 
+## 撮影方法は2通りある
+
+| モード | 仕組み | 実測(MDN, 文書31844px) |
+| --- | --- | --- |
+| **高速**(既定) | `chrome.debugger` → CDP `Page.captureScreenshot({captureBeyondViewport:true})` を1回 | 6.4秒 |
+| 連写 | `captureVisibleTab` + スクロール + 合成 | 31.4秒 |
+
+高速モードは DevTools の「Capture full size screenshot」と同じ経路。
+`debugger` 権限が要るためウェブストア審査は厳しいが、
+**このプロジェクトは未パッケージ運用と決めた**ので採用している。
+
+### 高速モードを諦める条件 (`fastModeBlocker`)
+
+1. `meta.scrollerKind !== "document"` — CDPはタブの最上位ドキュメントしか撮れない。
+   iframeやスクロール領域が本文なら連写でないと中身が撮れない
+2. 画像の辺が **64000px** を超える — 下記の無言破綻を避けるため
+3. `chrome.debugger.attach` / `sendCommand` が失敗した場合
+
+いずれも `meta.fallbackReason` に理由を入れ、結果ページに表示する。
+
+### captureBeyondViewport の罠 (どちらも実測済み)
+
+**その1: 65535px を超えると無言で真っ黒を返す。**
+例外も警告も出ず、正しい寸法の完全な黒画像が返る。境界を詰めた結果:
+
+```
+画像高さ 65520px → 正常
+画像高さ 65720px → 黒率100%
+```
+
+canvasと同じテクスチャ上限だが、canvasは例外を投げるのにCDPは成功したふりをする。
+デバッガを繋ぐと警告バーのぶんビューポートが縮んで再レイアウトが起きるため、
+予測値には余裕を持たせて **64000px** で切っている。
+それでも掴んでしまった場合に備え、結果ページ側で `isBlank()` が縦24点を見て警告を出す。
+
+**その2: fixed / sticky が画面数ぶん繰り返されることがある。**
+captureBeyondViewport は「ビューポートを全高に広げて1回描く」場合と
+「画面ぶんずつ区切って描いて繋ぐ」場合があり、**どちらになるかは実行ごとに変わる**
+(同一条件の3回中2回が繰り返しになった)。後者だと固定ヘッダーが6回焼き付き、
+内容が1画面分ずれる。
+
+連写モードのように1枚ずつ制御できないので、**撮る前に固定をやめさせる**しかない。
+`content.js` の `flatten()` が:
+
+- 上端のヘッダー(`anchorTop`) → `position: absolute` で文書の先頭へ流す
+  (消さずに済み、繰り返しも起きない)
+- その他の fixed → `visibility: hidden`
+- sticky → `position: static` まで落とす
+  (基準位置を飛ばす連写モードの手では区切り描画に耐えない。
+   sticky は通常フローでの配置が static と同じなのでレイアウトは動かない)
+
 ## なぜこの作りなのか
 
 ブラウザに「ページ全体を撮る」APIは無い。使えるのは `chrome.tabs.captureVisibleTab` だけで、
@@ -276,6 +327,18 @@ Brave Browser Nightly を `executablePath` で使う (リリース版Chromeは
 
 固定要素は色で塗り分け、縦1列を走査して**色の帯が何回現れたか**を数える
 (固定ヘッダー=1回、固定フッター=0回、浮遊ウィジェット=0回、stickyサイドバー=1回)。
+
+### 高速モードとPlaywrightのビューポートエミュレーションは併用できない
+
+`chrome.debugger.attach/detach` は **Playwright が張った
+`Emulation.setDeviceMetricsOverride` を巻き添えで解除する**。
+その結果、同じブラウザで続けて撮ると `captureVisibleTab` の倍率がずれる
+(実測: dpr 2.00 が 1.92 になり、画像が 1520×8120 → 1456×7777 に狂った)。
+
+**製品側の問題ではない** — `viewport: null` (エミュレーションなし) で試すと正常だった。
+テストの前提が崩れるだけなので、`withBrowser()` で**シナリオごとにブラウザを立て直す**。
+「単独では通るのに連続実行だと落ちる」形で出るので、原因の見当がつきにくい。
+似た症状が出たら、まず単独実行と `viewport: null` で切り分ける。
 
 ### テスト時の権限
 
