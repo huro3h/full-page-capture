@@ -165,11 +165,14 @@ async function checkImage(result, scenario) {
     // 1回しか写っていなくても複数回に数えてしまう。文字の無い左寄りの列で数える。
     const left = Math.round(c.width * 0.1);
     const right = c.width - 100;
+    // 純色は表示先ディスプレイの色変換で寄せられることがある
+    // (外部ディスプレイ上の窓では #ff00ff が (255,64,255) で撮れた)。
+    // 行の色 (G=40固定) と取り違えない範囲で、色相が分かる程度に緩く判定する。
     return {
-      header: count(left, (r, g, b) => r > 240 && g < 20 && b > 240),
-      footer: count(left, (r, g, b) => r < 20 && g > 240 && b > 240),
-      widget: count(right, (r, g, b) => r > 240 && g > 240 && b < 20),
-      side: count(right, (r, g, b) => r < 20 && g > 240 && b < 20),
+      header: count(left, (r, g, b) => r > 200 && g < 110 && b > 200),
+      footer: count(left, (r, g, b) => r < 80 && g > 200 && b > 200),
+      widget: count(right, (r, g, b) => r > 200 && g > 200 && b < 80),
+      side: count(right, (r, g, b) => r < 80 && g > 200 && b < 80),
       // 外側のページのグレー(#888)。iframeのクリップが効いていれば1回も出ない。
       outer: count(
         mid,

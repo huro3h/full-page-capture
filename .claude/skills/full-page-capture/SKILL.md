@@ -204,9 +204,20 @@ DOMのある結果ページで合成すれば `URL.createObjectURL` + `<a downlo
 
 ## ファイル名テンプレート
 
-`src/lib/filename.js` が展開を担い、設定ページと結果ページの両方から
-classic script として読み込まれる (グローバル関数を置く方式)。
-設定は `chrome.storage.sync` に `{ template, maxLength }` で入る。
+`src/lib/settings.js` が設定の既定値とテンプレートの展開 (`buildFilename`) を担い、
+設定ページ・結果ページ・service worker から classic script として読み込まれる
+(グローバル関数を置く方式)。設定は `chrome.storage.sync` に
+`{ captureMode, template, maxLength }` で入る。
+
+### 結果ページの入力欄
+
+結果ページのファイル名は入力欄で、初期値はテンプレートから作った名前 (`presetName`)。
+
+- 入力欄の値も `buildFilename` に通す。手入力でも `%DATE%` などが使え、禁止文字も落ちる
+- 手で書き換えたら (`filenameEdited`) 設定変更による再展開で上書きしない
+- 手入力の長さの上限は設定の最大文字数ではなく `CUSTOM_NAME_MAX = 200`。
+  設定の上限は自動生成の名前を抑えるためのもので、打った名前を黙って切るのは不親切なため
+- Enter / Esc は `isComposing` の間は無視する (日本語入力の確定・取り消しと衝突するため)
 
 変数の記法は `%TITLE%` 形式。FireShot も同じ流儀 (`%VERSION%` などが残っている)
 で、`{}` と違ってURLのパーセントエンコーディング (`%20`) と衝突しない
@@ -393,6 +404,13 @@ osascript -e 'tell application "System Events" to get name of first process whos
 字画で帯が分断され、1回しか写っていなくても4回と数えてしまう
 (フォント描画が少し変わっただけで、それまで文字の隙間を通っていた列が字に当たった)。
 帯は文字の無い左寄りの列 (幅の10%) で数える。
+
+### 色の判定は純色ぴったりで見ない
+
+裏の窓が外部ディスプレイ側に開くと、撮影画像が色変換されて
+`#ff00ff` が `(255,64,255)` で返ることがある (行の色のような中間色はほぼずれない)。
+固定要素の帯は、行の色と取り違えない範囲の緩い閾値で数える。
+変更前のコードでも同じように落ちるなら、まずこれを疑う。
 
 ### フィクスチャで一度ひっかかった罠
 
