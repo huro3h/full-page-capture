@@ -7,13 +7,14 @@
 // 通常のページと、本文が同一オリジンiframeに入ったページの2通りで回す。
 
 const { chromium } = require("playwright");
+const { spawnSync } = require("child_process");
 const http = require("http");
 const os = require("os");
 const path = require("path");
 const fs = require("fs");
 
-const BRAVE =
-  "/Applications/Brave Browser Nightly.app/Contents/MacOS/Brave Browser Nightly";
+// 実行ファイルではなくアプリとして open で起動する (withBrowser を参照)。
+const BRAVE_APP = "/Applications/Brave Browser Nightly.app";
 const SRC = path.resolve(__dirname, "..");
 const PORT = 8931;
 const ORIGIN = `http://localhost:${PORT}`;
@@ -160,10 +161,13 @@ async function checkImage(result, scenario) {
       return n;
     };
     const mid = Math.round(c.width / 2);
+    // ヘッダー・フッターは中央に白い文字があり、中央列で数えると字画で帯が分断されて
+    // 1回しか写っていなくても複数回に数えてしまう。文字の無い左寄りの列で数える。
+    const left = Math.round(c.width * 0.1);
     const right = c.width - 100;
     return {
-      header: count(mid, (r, g, b) => r > 240 && g < 20 && b > 240),
-      footer: count(mid, (r, g, b) => r < 20 && g > 240 && b > 240),
+      header: count(left, (r, g, b) => r > 240 && g < 20 && b > 240),
+      footer: count(left, (r, g, b) => r < 20 && g > 240 && b > 240),
       widget: count(right, (r, g, b) => r > 240 && g > 240 && b < 20),
       side: count(right, (r, g, b) => r < 20 && g > 240 && b < 20),
       // 外側のページのグレー(#888)。iframeのクリップが効いていれば1回も出ない。
@@ -205,26 +209,91 @@ async function checkImage(result, scenario) {
   }
 }
 
-// シナリオごとにブラウザを立て直す。
-// 高速モードの chrome.debugger.attach/detach は Playwright のビューポート
-// エミュレーション(Emulation.setDeviceMetricsOverride)を巻き添えで解除してしまい、
-// 同じブラウザで続けて撮ると captureVisibleTab の倍率がずれる。
-// 製品側の問題ではないが、テストの前提が崩れるので分離する。
+// --remote-debugging-port=0 で起動すると、実際に使ったポートがこのファイルに書かれる。
+async function waitForDevToolsPort(userDataDir) {
+  const file = path.join(userDataDir, "DevToolsActivePort");
+  for (let i = 0; i < 200; i++) {
+    const port = fs.existsSync(file)
+      ? fs.readFileSync(file, "utf8").split("\n")[0]
+      : "";
+    if (port) return port;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error("ブラウザのデバッグポートが開かない");
+}
+
+// シナリオごとにブラウザを立て直す。撮影のたびにデバッガの付け外しが起きるので、
+// 前のシナリオの状態を持ち越さないよう分離しておく。
+//
+// ブラウザは裏で起動し、作業中のアプリから前面を奪わない。
+// Playwright の launch はバイナリを直接起動するため、起動時と newPage() のたびに
+// ブラウザが前面へ出てしまう。そこで
+//   1. open -g (前面にしない) + --no-startup-window (窓なし) で起動し
+//   2. connectOverCDP で繋ぎ
+//   3. ページは Target.createTarget({newWindow, background}) で裏の窓に開く
+// 裏の窓でも描画を止めないよう、occluded 扱いによる間引きを切っておく。
+// ヘッドレスにしないのは、高速モードの不具合がデバッガの警告バー(窓のUI)に絡むため。
 async function withBrowser(ext, fn) {
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "fpc-e2e-"));
-  const context = await chromium.launchPersistentContext(userDataDir, {
-    executablePath: BRAVE,
-    headless: false,
-    viewport: { width: VIEW_W, height: VIEW_H },
-    args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`],
-  });
+  spawnSync("open", [
+    "-g",
+    "-n",
+    "-a",
+    BRAVE_APP,
+    "--args",
+    `--user-data-dir=${userDataDir}`,
+    "--remote-debugging-port=0",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--no-startup-window",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-renderer-backgrounding",
+    "--disable-background-timer-throttling",
+    `--disable-extensions-except=${ext}`,
+    `--load-extension=${ext}`,
+  ]);
+  const port = await waitForDevToolsPort(userDataDir);
+  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+  const context = browser.contexts()[0];
+  const cdp = await browser.newBrowserCDPSession();
+
+  // 撮影対象を裏の新しい窓に開き、内寸を VIEW_W×VIEW_H に合わせる。
+  // ビューポートのエミュレーションは使わない — デバッガの付け外しで解除されるため。
+  const openPage = async (url) => {
+    const pagePromise = context.waitForEvent("page", { timeout: 20000 });
+    const { targetId } = await cdp.send("Target.createTarget", {
+      url,
+      newWindow: true,
+      background: true,
+    });
+    const page = await pagePromise;
+    await page.waitForLoadState("load");
+    const { windowId, bounds } = await cdp.send("Browser.getWindowForTarget", {
+      targetId,
+    });
+    const inner = await page.evaluate(() => [innerWidth, innerHeight]);
+    await cdp.send("Browser.setWindowBounds", {
+      windowId,
+      bounds: {
+        width: bounds.width + VIEW_W - inner[0],
+        height: bounds.height + VIEW_H - inner[1],
+      },
+    });
+    await page.waitForFunction(
+      ([w, h]) => innerWidth === w && innerHeight === h,
+      [VIEW_W, VIEW_H],
+      { timeout: 10000 },
+    );
+    return page;
+  };
+
   try {
     const sw =
       context.serviceWorkers()[0] ||
       (await context.waitForEvent("serviceworker", { timeout: 20000 }));
-    return await fn(context, sw);
+    return await fn(context, sw, openPage);
   } finally {
-    await context.close();
+    await cdp.send("Browser.close").catch(() => {});
   }
 }
 
@@ -279,9 +348,8 @@ async function withBrowser(ext, fn) {
     });
 
     for (const scenario of SCENARIOS) {
-      await withBrowser(ext, async (context, sw) => {
-        const page = await context.newPage();
-        await page.goto(scenario.url, { waitUntil: "load" });
+      await withBrowser(ext, async (context, sw, openPage) => {
+        const page = await openPage(scenario.url);
         await page.waitForTimeout(800);
 
         const result = await capture(context, sw, scenario.url);
@@ -423,9 +491,7 @@ async function withBrowser(ext, fn) {
         );
         await result.waitForFunction(
           () =>
-            document
-              .getElementById("open-options")
-              .textContent.startsWith("localhost-"),
+            document.getElementById("filename").value.startsWith("localhost-"),
           null,
           { timeout: 20000 },
         );
@@ -449,11 +515,48 @@ async function withBrowser(ext, fn) {
           captureMeta.title = 'a/b:c*d?e"f<g>h|i とても長いタイトル';
           return refreshFilename();
         });
-        const shortName = await result.textContent("#open-options");
+        const shortName = await result.inputValue("#filename");
         report(
           `禁止文字を除去して指定文字数に収める ("${shortName}")`,
           shortName.length <= 12 && !/[\\/:*?"<>|]/.test(shortName),
           `長さ ${shortName.length}`,
+        );
+
+        // 結果ページの入力欄で任意の名前を付けられるか。
+        // 拡張子まで打っても二重にならず、禁止文字は落とし、変数も展開する。
+        await result.fill("#filename", "メモ/手入力 %YEAR%.png");
+        const custom = await save("save-png", null, "custom");
+        const customExpected = `メモ_手入力 ${new Date().getFullYear()}.png`;
+        report(
+          `入力欄の名前で保存できる (${path.basename(custom.file).replace(/^custom-/, "")})`,
+          path.basename(custom.file) === "custom-" + customExpected,
+          `期待 ${customExpected}`,
+        );
+
+        // 手入力した名前は設定を変えても上書きされない。
+        await sw.evaluate(() => chrome.storage.sync.set({ template: "%DOMAIN%" }));
+        await result.waitForFunction(
+          () => document.getElementById("filename").placeholder === "localhost",
+          null,
+          { timeout: 20000 },
+        );
+        const kept = await result.inputValue("#filename");
+        report(
+          "手入力した名前は設定変更で上書きされない",
+          kept === "メモ/手入力 %YEAR%.png",
+          kept,
+        );
+
+        // ↺ で設定の名前に戻り、空欄なら設定の名前で保存する。
+        await result.click("#reset-filename");
+        const reset = await result.inputValue("#filename");
+        await result.fill("#filename", "");
+        const empty = await save("save-png", null, "empty");
+        report(
+          "↺で設定の名前に戻り、空欄なら設定の名前で保存する",
+          reset === "localhost" &&
+            path.basename(empty.file) === "empty-localhost.png",
+          `reset=${reset} file=${path.basename(empty.file)}`,
         );
 
         // 長すぎて1ページに収まらない場合は A4分割へ退避するか。

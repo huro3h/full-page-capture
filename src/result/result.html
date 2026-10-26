@@ -47,6 +47,21 @@
       @media (prefers-color-scheme: dark) { #warn { color: #fbbf24; } }
       .spacer { margin-left: auto; }
       label { color: var(--muted); display: flex; align-items: center; gap: 6px; }
+      .filename {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+      #filename {
+        width: 34ch;
+        padding: 5px 8px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--panel);
+        color: var(--fg);
+        font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      #filename:focus { outline: 2px solid var(--muted); outline-offset: -1px; }
       select {
         padding: 5px 8px;
         border: 1px solid var(--border);
@@ -67,15 +82,12 @@
       }
       button:disabled { opacity: 0.5; cursor: default; }
       button.ghost {
+        padding: 5px 9px;
         background: transparent;
         color: var(--muted);
         font-weight: 400;
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        max-width: 34ch;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
       }
+      button.ghost[hidden] { display: none; }
       button.ghost:hover { color: var(--fg); border-color: var(--muted); }
       main { padding: 16px; overflow: auto; }
       canvas {
@@ -93,7 +105,18 @@
       <span id="info">合成中…</span>
       <span id="warn"></span>
       <span class="spacer"></span>
-      <button id="open-options" class="ghost" title="クリックでファイル名の設定を開く"></button>
+      <span class="filename">
+        <input
+          id="filename"
+          type="text"
+          spellcheck="false"
+          autocomplete="off"
+          aria-label="保存するファイル名"
+          title="保存するファイル名 (拡張子は形式に応じて付く)"
+        />
+        <button id="reset-filename" class="ghost" title="設定のテンプレートの名前に戻す" hidden>↺</button>
+        <button id="open-options" class="ghost" title="ファイル名テンプレートの設定を開く">設定</button>
+      </span>
       <label>
         PDFのページ
         <select id="pdf-layout">

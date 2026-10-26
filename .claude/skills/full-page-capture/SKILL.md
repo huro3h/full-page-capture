@@ -40,7 +40,22 @@ canvasと同じテクスチャ上限だが、canvasは例外を投げるのにCD
 予測値には余裕を持たせて **64000px** で切っている。
 それでも掴んでしまった場合に備え、結果ページ側で `isBlank()` が縦24点を見て警告を出す。
 
-**その2: fixed / sticky が画面数ぶん繰り返されることがある。**
+**その2: デバッガ接続直後に撮ると、1画面目が繰り返された画像が返る。**
+`chrome.debugger.attach` で出る警告バーは**アニメーションで差し込まれ**、
+ビューポートが約140msかけて段階的に縮む (実測 719→663px、20ms刻みで5〜6段)。
+縮んでいる最中に `captureBeyondViewport` を呼ぶと、ビューポートより下が
+**1画面目の中身ごと**の繰り返しで描かれる (40行中6行しか合わない)。
+Brave Nightly 156 では毎回これになった。Playwright から CDP を直接叩く経路
+(警告バーが出ない) では Chrome 156 / Beta 157 / Brave Nightly 156 のいずれでも起きない。
+`waitForViewportSettled()` が、ページ内で `innerHeight` が200ms変わらなくなるまで
+待ってから撮る (上限2秒)。固定1秒待ちでも直るが、環境によってアニメーションの長さが
+変わりうるので「止まるまで待つ」にしている。
+「`innerHeight` が変わるまで待つ」では足りない — 縮み始めた直後に撮ってしまう。
+
+**その3: fixed / sticky が画面数ぶん繰り返されることがある。**
+(下記の「実行ごとに変わる」は、その2の競合を見ていた可能性が高い。
+その2を直したあとは区切り描画は再現していないが、flatten は下端の固定フッターや
+浮遊ウィジェットを消すのにも要るので残している)
 captureBeyondViewport は「ビューポートを全高に広げて1回描く」場合と
 「画面ぶんずつ区切って描いて繋ぐ」場合があり、**どちらになるかは実行ごとに変わる**
 (同一条件の3回中2回が繰り返しになった)。後者だと固定ヘッダーが6回焼き付き、
@@ -315,9 +330,33 @@ PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm i playwright   # 初回のみ
 node test/e2e.js
 ```
 
-Brave Browser Nightly を `executablePath` で使う (リリース版Chromeは
+Brave Browser Nightly を使う (リリース版Chromeは
 `--load-extension` を黙って無視する)。ワークスペース共通の方針は
 `~/.claude/skills/browser-testing` を参照。
+
+### ブラウザは裏で起動する (前面を奪わない)
+
+ユーザーの作業を邪魔しないよう、テスト中のブラウザは**前面に出さない**。
+`launchPersistentContext` はバイナリを直接起動するので、起動時と `newPage()` のたびに
+ブラウザが前面に出る。`withBrowser()` は次の手順でこれを避けている:
+
+1. `open -g -n -a "Brave Browser Nightly.app" --args --no-startup-window --remote-debugging-port=0 ...`
+   — `-g` だけでは足りない。最初の窓を開いた瞬間に前面へ出るので、窓なしで起動する
+2. `userDataDir/DevToolsActivePort` からポートを読み、`chromium.connectOverCDP`
+3. ページは `Target.createTarget({ url, newWindow: true, background: true })` で裏の窓に開く。
+   **`context.newPage()` は使わない** (これも前面に出る)
+4. 内寸は `Browser.setWindowBounds` で 900×700 に合わせる (エミュレーションは使わない)
+5. 終了は `Browser.close` (connectOverCDP の `browser.close()` は切断するだけ)
+
+裏の窓でも描画が間引かれないよう `--disable-backgrounding-occluded-windows` などを付ける
+(Playwright の launch が自動で付けていたフラグ)。
+ヘッドレスにしないのは、高速モードの不具合がデバッガの警告バー (窓のUI) に絡むため。
+
+前面を奪っていないかの確かめ方 (実行中に並行で回す):
+
+```bash
+osascript -e 'tell application "System Events" to get name of first process whose frontmost is true'
+```
 
 ### 検証の考え方
 
@@ -328,17 +367,14 @@ Brave Browser Nightly を `executablePath` で使う (リリース版Chromeは
 固定要素は色で塗り分け、縦1列を走査して**色の帯が何回現れたか**を数える
 (固定ヘッダー=1回、固定フッター=0回、浮遊ウィジェット=0回、stickyサイドバー=1回)。
 
-### 高速モードとPlaywrightのビューポートエミュレーションは併用できない
+### ビューポートのエミュレーションは使わない
 
 `chrome.debugger.attach/detach` は **Playwright が張った
 `Emulation.setDeviceMetricsOverride` を巻き添えで解除する**。
-その結果、同じブラウザで続けて撮ると `captureVisibleTab` の倍率がずれる
+その結果、同じブラウザで続けて撮ると `captureVisibleTab` の倍率がずれた
 (実測: dpr 2.00 が 1.92 になり、画像が 1520×8120 → 1456×7777 に狂った)。
-
-**製品側の問題ではない** — `viewport: null` (エミュレーションなし) で試すと正常だった。
-テストの前提が崩れるだけなので、`withBrowser()` で**シナリオごとにブラウザを立て直す**。
-「単独では通るのに連続実行だと落ちる」形で出るので、原因の見当がつきにくい。
-似た症状が出たら、まず単独実行と `viewport: null` で切り分ける。
+**製品側の問題ではない**。今は窓そのものの大きさで内寸を合わせているので起きないが、
+念のため `withBrowser()` は**シナリオごとにブラウザを立て直す**。
 
 ### テスト時の権限
 
@@ -350,6 +386,13 @@ Brave Browser Nightly を `executablePath` で使う (リリース版Chromeは
 撮影はservice workerの `run()` を `sw.evaluate()` から直接呼ぶ
 (`background.js` はクラシックスクリプトなので、トップレベルの関数宣言が
 ワーカーのグローバルに乗る)。
+
+### 帯を数える列に文字を通さない
+
+固定ヘッダー/フッターはフィクスチャ上で中央に白文字がある。中央列で帯を数えると
+字画で帯が分断され、1回しか写っていなくても4回と数えてしまう
+(フォント描画が少し変わっただけで、それまで文字の隙間を通っていた列が字に当たった)。
+帯は文字の無い左寄りの列 (幅の10%) で数える。
 
 ### フィクスチャで一度ひっかかった罠
 

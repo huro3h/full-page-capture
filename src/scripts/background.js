@@ -18,6 +18,13 @@ const DEBUGGER_VERSION = "1.3";
 // 予測値には余裕を持たせて手前で切る。
 const FAST_MAX_SIDE = 64000;
 
+// デバッガを繋ぐと出る警告バーはアニメーションで差し込まれ、ビューポートが
+// 約140msかけて段階的に縮む(実測 719→663px)。縮んでいる最中に captureBeyondViewport を
+// 呼ぶと、ビューポートより下が「1画面目の繰り返し」で描かれた画像が返る。
+// 高さがこの時間だけ変わらなくなるまで待ってから撮る。
+const VIEWPORT_STABLE_MS = 200;
+const VIEWPORT_WAIT_MAX_MS = 2000;
+
 // captureVisibleTab は 1秒あたり2回までのレート制限がある(MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND)。
 // 制限に当たると lastError が返るだけで撮れないので、最初から余裕を持って間隔を空ける。
 const CAPTURE_INTERVAL_MS = 520;
@@ -100,11 +107,36 @@ function fastModeBlocker(meta, dpr) {
   return null;
 }
 
+// 警告バーの差し込みでビューポートが縮み終わるのを待つ。
+// 判定はページ内で回す。往復のたびにCDPを挟むより細かく見られるため。
+// rAF ではなく setTimeout なのは、タブが裏に回っていても必ず終わらせるため。
+async function waitForViewportSettled(target) {
+  await chrome.debugger.sendCommand(target, "Runtime.evaluate", {
+    expression: `new Promise((resolve) => {
+      const start = performance.now();
+      let last = innerHeight;
+      let since = start;
+      const tick = () => {
+        const now = performance.now();
+        if (innerHeight !== last) {
+          last = innerHeight;
+          since = now;
+        }
+        if (now - since >= ${VIEWPORT_STABLE_MS} || now - start >= ${VIEWPORT_WAIT_MAX_MS}) resolve();
+        else setTimeout(tick, 16);
+      };
+      tick();
+    })`,
+    awaitPromise: true,
+  });
+}
+
 async function captureFast(tab, meta, dpr) {
   const target = { tabId: tab.id };
   await chrome.debugger.attach(target, DEBUGGER_VERSION);
   let dataUrl;
   try {
+    await waitForViewportSettled(target);
     const shot = await chrome.debugger.sendCommand(target, "Page.captureScreenshot", {
       format: "png",
       captureBeyondViewport: true,

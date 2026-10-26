@@ -19,6 +19,8 @@ const canvas = document.getElementById("canvas");
 const info = document.getElementById("info");
 const warn = document.getElementById("warn");
 const pdfLayout = document.getElementById("pdf-layout");
+const filenameInput = document.getElementById("filename");
+const resetFilename = document.getElementById("reset-filename");
 const openOptions = document.getElementById("open-options");
 const buttons = {
   png: document.getElementById("save-png"),
@@ -26,13 +28,20 @@ const buttons = {
   pdf: document.getElementById("save-pdf"),
 };
 
-let baseName = "capture";
+// 設定のテンプレートから作った名前。入力欄を空にしたときもこれで保存する。
+let presetName = "capture";
+// 入力欄を手で書き換えたか。書き換えた後は設定変更で上書きしない。
+let filenameEdited = false;
 let summary = "";
 // 撮影したページの情報と撮影時刻。ファイル名テンプレートの展開に使う。
 let captureMeta = null;
 let capturedAt = null;
 
-openOptions.textContent = "ファイル名…";
+// 手入力の名前に付ける長さの上限。設定の最大文字数は自動生成の名前を抑えるためのもので、
+// 自分で打った名前を黙って切り詰めるのは不親切なので、OSの上限の手前だけで止める。
+const CUSTOM_NAME_MAX = 200;
+// 拡張子まで打たれた場合に二重にならないよう落とす。
+const TYPED_EXTENSION = /\.(png|jpe?g|pdf)$/i;
 
 const ask = (message) => chrome.runtime.sendMessage({ __fpcResult: true, ...message });
 
@@ -130,11 +139,37 @@ function isBlank(ctx, width, height) {
 async function refreshFilename() {
   if (!captureMeta) return;
   const settings = await loadSettings();
-  baseName = buildFilename(settings.template, captureMeta, settings.maxLength, capturedAt);
-  openOptions.textContent = baseName;
-  openOptions.title = `ファイル名: ${baseName}\nクリックで設定を開く`;
+  presetName = buildFilename(settings.template, captureMeta, settings.maxLength, capturedAt);
+  filenameInput.placeholder = presetName;
+  if (!filenameEdited) filenameInput.value = presetName;
 }
 
+// 保存に使う名前(拡張子なし)。入力欄の値をそのまま使い、空なら設定の名前に戻す。
+// 手入力にも %DATE% などの変数を書けるよう、テンプレートとして展開する。
+function baseName() {
+  const typed = filenameInput.value.trim().replace(TYPED_EXTENSION, "");
+  if (!typed || !captureMeta) return presetName;
+  return buildFilename(typed, captureMeta, CUSTOM_NAME_MAX, capturedAt);
+}
+
+function setFilenameEdited(edited) {
+  filenameEdited = edited;
+  resetFilename.hidden = !edited;
+}
+
+filenameInput.addEventListener("input", () =>
+  setFilenameEdited(filenameInput.value !== presetName),
+);
+// Enter で確定したらPNGで保存する。いちばん使う形式なので。
+filenameInput.addEventListener("keydown", (event) => {
+  if (event.isComposing) return; // 変換の確定・取り消しは日本語入力に任せる
+  if (event.key === "Enter" && !buttons.png.disabled) buttons.png.click();
+  if (event.key === "Escape") resetFilename.click();
+});
+resetFilename.addEventListener("click", () => {
+  filenameInput.value = presetName;
+  setFilenameEdited(false);
+});
 openOptions.addEventListener("click", () => chrome.runtime.openOptionsPage());
 
 // 設定ページで変えたら、開きっぱなしの結果ページにも即反映する。
@@ -191,7 +226,7 @@ async function encodeSlice(sourceY, sliceHeight, quality) {
 buttons.png.addEventListener("click", async () => {
   setBusy(true, "PNGを書き出し中…");
   try {
-    download(await toBlob(canvas, "image/png"), `${baseName}.png`);
+    download(await toBlob(canvas, "image/png"), `${baseName()}.png`);
   } finally {
     setBusy(false);
   }
@@ -201,7 +236,7 @@ buttons.jpeg.addEventListener("click", async () => {
   setBusy(true, "JPEGを書き出し中…");
   try {
     // 背景は合成時に白で塗ってあるので、そのまま変換してよい。
-    download(await toBlob(canvas, "image/jpeg", JPEG_QUALITY), `${baseName}.jpg`);
+    download(await toBlob(canvas, "image/jpeg", JPEG_QUALITY), `${baseName()}.jpg`);
   } finally {
     setBusy(false);
   }
@@ -248,7 +283,7 @@ buttons.pdf.addEventListener("click", async () => {
       }
     }
 
-    download(buildPdf(pages), `${baseName}.pdf`);
+    download(buildPdf(pages), `${baseName()}.pdf`);
   } finally {
     setBusy(false);
   }
