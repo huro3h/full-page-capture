@@ -1,0 +1,32 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>FPC Fixture (sidebar)</title>
+<style>
+  /* 左にサイドバー、右の本文だけが縦にスクロールする作り。文書自体は1pxも動かない。
+     本文を広げて撮り、周囲 (上のバー・サイドバー・下のバー) も1回ずつ残ってほしい。 */
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { height:100%; overflow:hidden; }
+  body { font-family: monospace; background:#fff; }
+  #top { position:absolute; top:0; left:0; right:0; height:50px; background:#888; }
+  /* 固定のサイドバー。スクロール領域と重ならないので隠してはいけない */
+  #nav { position:fixed; top:50px; bottom:30px; left:0; width:200px; background:#ff8800;
+         color:#fff; padding:8px; font-size:14px; }
+  #main { position:absolute; top:50px; bottom:30px; left:200px; right:0; overflow:auto; }
+  #status { position:absolute; bottom:0; left:0; right:0; height:30px; background:#0000ff; }
+  /* 本文に重なって浮くウィジェット: 1回も写ってほしくない */
+  #widget { position:fixed; top:300px; right:20px; width:120px; height:120px; background:#ffff00; }
+  .row { height:100px; display:flex; align-items:center; padding-left:20px; color:#fff; font-size:20px; }
+</style></head><body>
+<div id="top"></div>
+<div id="nav">SIDEBAR</div>
+<div id="main"></div>
+<div id="status"></div>
+<div id="widget">CHAT</div>
+<script>
+  const main = document.getElementById('main');
+  for (let i = 0; i < 40; i++) {
+    const d = document.createElement('div');
+    d.className = 'row';
+    d.style.background = `rgb(${i * 6}, 40, ${200 - i * 4})`;
+    d.textContent = 'ROW ' + i;
+    main.appendChild(d);
+  }
+</script></body></html>

@@ -56,10 +56,19 @@ async function main() {
   const notes = [];
   // 撮影対象の可視領域。通常のページではビューポート全体と一致する。
   const clip = meta.clip || { x: 0, y: 0, w: meta.viewW, h: meta.viewH };
+  // スクロール領域の外(サイドバーやヘッダー)も含めた1画面。
+  // スクロールの主体がドキュメントなら clip と一致し、周囲は無い。
+  const frame =
+    meta.scrollerKind === "document" || !meta.windowH
+      ? { w: clip.w, h: clip.h }
+      : { w: meta.windowW, h: meta.windowH };
+  // スクロール領域が1画面より長いぶん。領域より右・下にある周囲はこの量だけずらして置く。
+  const growW = meta.pageW - clip.w;
+  const growH = meta.pageH - clip.h;
 
   // 実寸(デバイスピクセル)。上限を超える場合だけ全体を縮小する。
-  let width = Math.round(meta.pageW * meta.dpr);
-  let height = Math.round(meta.pageH * meta.dpr);
+  let width = Math.round((frame.w + growW) * meta.dpr);
+  let height = Math.round((frame.h + growH) * meta.dpr);
   let scale = 1;
   if (width > MAX_SIDE || height > MAX_SIDE || width * height > MAX_AREA) {
     scale = Math.min(MAX_SIDE / width, MAX_SIDE / height, Math.sqrt(MAX_AREA / (width * height)));
@@ -79,26 +88,34 @@ async function main() {
     if (!tile) continue;
     const blob = await (await fetch(tile.dataUrl)).blob();
     const bitmap = await createImageBitmap(blob);
+    // 座標はCSS px で受け、ここでデバイスピクセルへ直す。
+    const put = (sx, sy, sw, sh, dx, dy, dw = sw, dh = sh) => {
+      if (sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) return;
+      const d = meta.dpr;
+      ctx.drawImage(
+        bitmap,
+        Math.round(sx * d),
+        Math.round(sy * d),
+        Math.round(sw * d),
+        Math.round(sh * d),
+        Math.round(dx * d * scale),
+        Math.round(dy * d * scale),
+        Math.round(dw * d * scale),
+        Math.round(dh * d * scale),
+      );
+    };
+    // 周囲は撮影中に動かないので、先頭(スクロール位置0)の1枚から取る。
+    if (i === 0) drawFrame(ctx, put, clip, frame, growW, growH, 1 / meta.dpr);
     // 撮影画像はビューポート全体。スクロールコンテナやiframeが対象のときは、
     // その可視領域(clip)だけを切り出して使う。
     // 置く位置は実際に到達したスクロール座標。これだけで重なりも最後の半端な行も吸収される。
-    ctx.drawImage(
-      bitmap,
-      Math.round(clip.x * meta.dpr),
-      Math.round(clip.y * meta.dpr),
-      Math.round(clip.w * meta.dpr),
-      Math.round(clip.h * meta.dpr),
-      Math.round(tile.x * meta.dpr * scale),
-      Math.round(tile.y * meta.dpr * scale),
-      Math.round(clip.w * meta.dpr * scale),
-      Math.round(clip.h * meta.dpr * scale),
-    );
+    put(clip.x, clip.y, clip.w, clip.h, clip.x + tile.x, clip.y + tile.y);
     bitmap.close();
     info.textContent = `合成中… ${i + 1}/${count}`;
   }
 
-  if (meta.scrollerKind === "iframe") notes.push("ページ内のiframeを撮影しました");
-  else if (meta.scrollerKind === "element") notes.push("ページ内のスクロール領域を撮影しました");
+  if (meta.scrollerKind === "iframe") notes.push("ページ内のiframeを広げて撮影しました");
+  else if (meta.scrollerKind === "element") notes.push("ページ内のスクロール領域を広げて撮影しました");
   if (meta.fallbackReason) notes.push(`高速モードが使えず連写しました (${meta.fallbackReason})`);
   if (meta.grew) notes.push("撮影中にページが伸びました(開始時点の高さで打ち切り)");
   if (meta.truncated) notes.push("タイル数の上限に達したため途中で打ち切りました");
@@ -118,6 +135,43 @@ async function main() {
   await refreshFilename();
   updatePdfLayoutOptions();
   setBusy(false);
+}
+
+// スクロール領域の外(サイドバー・ヘッダー・下端のバーなど)を描く。
+// 1画面を clip で縦横3つずつに割り、中央(=スクロール領域)以外の8区画を置く。
+// 領域より右・下の区画は、領域が伸びたぶん (growW, growH) だけずらす。
+// 周囲は1画面ぶんしか撮れていないので、ずらして空いた隙間は、
+// 領域に接する端の1行(1列)を引き伸ばして埋める。サイドバーの地の色が下まで続く形になる。
+function drawFrame(ctx, put, clip, frame, growW, growH, onePx) {
+  const right = clip.x + clip.w;
+  const bottom = clip.y + clip.h;
+  // [元の位置, 幅(高さ), ずらす量]
+  const cols = [
+    [0, clip.x, 0],
+    [clip.x, clip.w, 0],
+    [right, frame.w - right, growW],
+  ];
+  const rows = [
+    [0, clip.y, 0],
+    [clip.y, clip.h, 0],
+    [bottom, frame.h - bottom, growH],
+  ];
+  for (const [sx, sw, ox] of cols) {
+    for (const [sy, sh, oy] of rows) {
+      if (sx === clip.x && sy === clip.y) continue; // 中身はタイルで描く
+      put(sx, sy, sw, sh, sx + ox, sy + oy);
+    }
+  }
+  // 補間を切る。1px を引き伸ばすと、補間が元の矩形の外(隣の行)まで混ぜてしまい、
+  // 下へ行くほど隣の色に寄っていく。
+  ctx.imageSmoothingEnabled = false;
+  for (const [sx, sw, ox] of [cols[0], cols[2]]) {
+    put(sx, bottom - onePx, sw, onePx, sx + ox, bottom, sw, growH);
+  }
+  for (const [sy, sh, oy] of [rows[0], rows[2]]) {
+    put(right - onePx, sy, onePx, sh, right, sy + oy, growW, sh);
+  }
+  ctx.imageSmoothingEnabled = true;
 }
 
 // 縦に散らした点がすべて純黒なら、撮影に失敗した画像とみなす。

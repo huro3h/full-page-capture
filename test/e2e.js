@@ -4,7 +4,8 @@
 //
 // 検証の考え方: フィクスチャの各行に一意な色を割り当て、合成画像の
 // 「文書座標 → 色」が一致するかを見る。ずれ・欠け・二重描画があれば必ず落ちる。
-// 通常のページと、本文が同一オリジンiframeに入ったページの2通りで回す。
+// 通常のページ、本文が同一オリジンiframeに入ったページ、
+// 左にサイドバーがあり本文だけがスクロールするページの3通りで回す。
 
 const { chromium } = require("playwright");
 const { spawnSync } = require("child_process");
@@ -25,21 +26,46 @@ const HEAD_H = 60; // fixture.html の body padding-top
 const ROW_H = 100;
 const ROWS = 40;
 
-// contentW = 撮影対象の幅。直接撮るならビューポート幅、iframeならiframeの幅。
+// off = 合成画像上でスクロール領域が始まる位置。contentW = スクロール領域の幅。
+// out = 画像全体の大きさ(CSS px)。スクロール領域が対象のときは、周囲の1画面に
+// 「領域が伸びたぶん」を足した大きさになる。
+// fixture は検証の種類 ("standard" = fixture.html の固定要素, "sidebar" = 周囲の写り方)。
 const SCENARIOS = [
   {
     name: "通常のページ",
     url: `${ORIGIN}/`,
+    fixture: "standard",
+    off: { x: 0, y: 0 },
     contentW: VIEW_W,
+    headH: HEAD_H,
+    out: { w: VIEW_W, h: HEAD_H + ROWS * ROW_H },
     kind: "document",
     method: "高速",
     extras: true,
   },
   {
+    // iframe は (70, 50) に 760×520。外側のページも先頭の1画面ぶん写る。
     name: "同一オリジンiframe",
     url: `${ORIGIN}/iframe`,
+    fixture: "standard",
+    off: { x: 70, y: 50 },
     contentW: 760,
+    headH: HEAD_H,
+    out: { w: VIEW_W, h: VIEW_H + HEAD_H + ROWS * ROW_H - 520 },
     kind: "iframe",
+    method: "連写",
+    extras: false,
+  },
+  {
+    // 本文は (200, 50) に 700×620。上に50px・下に30pxのバー、左に200pxのサイドバー。
+    name: "サイドバー付きのページ",
+    url: `${ORIGIN}/sidebar`,
+    fixture: "sidebar",
+    off: { x: 200, y: 50 },
+    contentW: 700,
+    headH: 0,
+    out: { w: VIEW_W, h: VIEW_H + ROWS * ROW_H - 620 },
+    kind: "element",
     method: "連写",
     extras: false,
   },
@@ -48,10 +74,13 @@ const SCENARIOS = [
 function startServer() {
   const direct = fs.readFileSync(path.join(__dirname, "fixture.html"));
   const framed = fs.readFileSync(path.join(__dirname, "fixture-iframe.html"));
+  const sidebar = fs.readFileSync(path.join(__dirname, "fixture-sidebar.html"));
   return new Promise((resolve) => {
     const server = http.createServer((req, res) => {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(req.url.startsWith("/iframe") ? framed : direct);
+      if (req.url.startsWith("/iframe")) res.end(framed);
+      else if (req.url.startsWith("/sidebar")) res.end(sidebar);
+      else res.end(direct);
     });
     server.listen(PORT, () => resolve(server));
   });
@@ -114,19 +143,19 @@ async function capture(context, sw, url) {
 
 async function checkImage(result, scenario) {
   const samples = await result.evaluate(
-    ({ contentW, headH, rowH, rows }) => {
+    ({ outW, off, headH, rowH, rows }) => {
       const c = document.getElementById("canvas");
       const ctx = c.getContext("2d");
-      const dpr = c.width / contentW;
+      const dpr = c.width / outW;
       const out = [];
       for (let i = 0; i < rows; i++) {
-        const y = Math.round((headH + i * rowH + rowH / 2) * dpr);
-        const px = ctx.getImageData(Math.round(20 * dpr), y, 1, 1).data;
+        const y = Math.round((off.y + headH + i * rowH + rowH / 2) * dpr);
+        const px = ctx.getImageData(Math.round((off.x + 20) * dpr), y, 1, 1).data;
         out.push([i, px[0], px[1], px[2]]);
       }
       return { dpr, w: c.width, h: c.height, out };
     },
-    { contentW: scenario.contentW, headH: HEAD_H, rowH: ROW_H, rows: ROWS },
+    { outW: scenario.out.w, off: scenario.off, headH: scenario.headH, rowH: ROW_H, rows: ROWS },
   );
 
   const mismatched = samples.out.filter(([i, r, g, b]) => {
@@ -139,77 +168,101 @@ async function checkImage(result, scenario) {
     JSON.stringify(mismatched.slice(0, 5)),
   );
 
-  const expectedW = Math.round(scenario.contentW * samples.dpr);
-  const expectedH = Math.round((HEAD_H + ROWS * ROW_H) * samples.dpr);
+  const expectedW = Math.round(scenario.out.w * samples.dpr);
+  const expectedH = Math.round(scenario.out.h * samples.dpr);
   report(
-    `[${scenario.name}] 画像サイズ ${samples.w}×${samples.h} == 内容サイズ ${expectedW}×${expectedH}`,
+    `[${scenario.name}] 画像サイズ ${samples.w}×${samples.h} == ${expectedW}×${expectedH}`,
     samples.w === expectedW && samples.h === expectedH,
   );
 
-  const bands = await result.evaluate(() => {
-    const c = document.getElementById("canvas");
-    const ctx = c.getContext("2d");
-    const count = (x, pred) => {
-      const d = ctx.getImageData(x, 0, 1, c.height).data;
-      let n = 0;
-      let inBand = false;
-      for (let y = 0; y < c.height; y++) {
-        const hit = pred(d[y * 4], d[y * 4 + 1], d[y * 4 + 2]);
-        if (hit && !inBand) n++;
-        inBand = hit;
+  // 縦1列を走査して、条件に合う色の帯が何回現れたかを数える。列は CSS px で渡す。
+  const bands = await result.evaluate(
+    ({ dpr, columns }) => {
+      const c = document.getElementById("canvas");
+      const ctx = c.getContext("2d");
+      const preds = {
+        // 純色は表示先ディスプレイの色変換で寄せられることがある
+        // (外部ディスプレイ上の窓では #ff00ff が (255,64,255) で撮れた)。
+        // 行の色 (G=40固定) と取り違えない範囲で、色相が分かる程度に緩く判定する。
+        magenta: (r, g, b) => r > 200 && g < 110 && b > 200,
+        cyan: (r, g, b) => r < 80 && g > 200 && b > 200,
+        yellow: (r, g, b) => r > 200 && g > 200 && b < 80,
+        green: (r, g, b) => r < 80 && g > 200 && b < 80,
+        orange: (r, g, b) => r > 200 && g > 90 && g < 180 && b < 80,
+        blue: (r, g, b) => r < 80 && g < 80 && b > 200,
+        // 外側のページのグレー(#888)
+        gray: (r, g, b) =>
+          Math.abs(r - 136) < 6 && Math.abs(g - 136) < 6 && Math.abs(b - 136) < 6,
+      };
+      const out = {};
+      for (const [key, x, color] of columns) {
+        const d = ctx.getImageData(Math.round(x * dpr), 0, 1, c.height).data;
+        let n = 0;
+        let inBand = false;
+        let last = -1;
+        for (let y = 0; y < c.height; y++) {
+          const hit = preds[color](d[y * 4], d[y * 4 + 1], d[y * 4 + 2]);
+          if (hit && !inBand) n++;
+          if (hit) last = y;
+          inBand = hit;
+        }
+        // 帯の数と、最後に現れた位置 (CSS px)
+        out[key] = { n, last: last < 0 ? -1 : Math.floor(last / dpr) };
       }
-      return n;
-    };
-    const mid = Math.round(c.width / 2);
-    // ヘッダー・フッターは中央に白い文字があり、中央列で数えると字画で帯が分断されて
-    // 1回しか写っていなくても複数回に数えてしまう。文字の無い左寄りの列で数える。
-    const left = Math.round(c.width * 0.1);
-    const right = c.width - 100;
-    // 純色は表示先ディスプレイの色変換で寄せられることがある
-    // (外部ディスプレイ上の窓では #ff00ff が (255,64,255) で撮れた)。
-    // 行の色 (G=40固定) と取り違えない範囲で、色相が分かる程度に緩く判定する。
-    return {
-      header: count(left, (r, g, b) => r > 200 && g < 110 && b > 200),
-      footer: count(left, (r, g, b) => r < 80 && g > 200 && b > 200),
-      widget: count(right, (r, g, b) => r > 200 && g > 200 && b < 80),
-      side: count(right, (r, g, b) => r < 80 && g > 200 && b < 80),
-      // 外側のページのグレー(#888)。iframeのクリップが効いていれば1回も出ない。
-      outer: count(
-        mid,
-        (r, g, b) =>
-          Math.abs(r - 136) < 6 &&
-          Math.abs(g - 136) < 6 &&
-          Math.abs(b - 136) < 6,
-      ),
-    };
-  });
-  report(
-    `[${scenario.name}] 固定ヘッダーは1回だけ写る`,
-    bands.header === 1,
-    `実際 ${bands.header}`,
+      return out;
+    },
+    { dpr: samples.dpr, columns: bandColumns(scenario) },
   );
-  report(
-    `[${scenario.name}] 固定フッターは写らない`,
-    bands.footer === 0,
-    `実際 ${bands.footer}`,
-  );
-  report(
-    `[${scenario.name}] 浮遊ウィジェットは写らない`,
-    bands.widget === 0,
-    `実際 ${bands.widget}`,
-  );
-  report(
-    `[${scenario.name}] stickyサイドバーは1回だけ写る`,
-    bands.side === 1,
-    `実際 ${bands.side}`,
-  );
-  if (scenario.kind === "iframe") {
-    report(
-      `[${scenario.name}] 外側のページが写り込まない`,
-      bands.outer === 0,
-      `実際 ${bands.outer}`,
-    );
+
+  const expect = (label, key, n) =>
+    report(`[${scenario.name}] ${label}`, bands[key].n === n, `実際 ${bands[key].n}`);
+
+  if (scenario.fixture === "standard") {
+    expect("固定ヘッダーは1回だけ写る", "header", 1);
+    expect("固定フッターは写らない", "footer", 0);
+    expect("浮遊ウィジェットは写らない", "widget", 0);
+    expect("stickyサイドバーは1回だけ写る", "side", 1);
+    if (scenario.kind === "iframe") expect("外側のページは先頭に1回だけ写る", "outer", 1);
+    return;
   }
+
+  // サイドバー付きのページ
+  const { h } = scenario.out;
+  expect("上のバーは先頭に1回だけ写る", "top", 1);
+  expect("浮遊ウィジェットは写らない", "widget", 0);
+  report(
+    `[${scenario.name}] サイドバーが途切れず下端まで続く`,
+    bands.nav.n === 1 && bands.nav.last === h - 31,
+    JSON.stringify(bands.nav),
+  );
+  report(
+    `[${scenario.name}] 下のバーは末尾に1回だけ写る`,
+    bands.status.n === 1 && bands.status.last === h - 1,
+    JSON.stringify(bands.status),
+  );
+}
+
+// 帯を数える列 (CSS px)。[名前, x, 色]
+// ヘッダー・フッターは中央に白い文字があり、中央列で数えると字画で帯が分断されて
+// 1回しか写っていなくても複数回に数えてしまう。文字の無い左寄りの列で数える。
+function bandColumns(scenario) {
+  const { off, contentW } = scenario;
+  if (scenario.fixture === "standard") {
+    const left = off.x + contentW * 0.1;
+    return [
+      ["header", left, "magenta"],
+      ["footer", left, "cyan"],
+      ["widget", off.x + contentW - 50, "yellow"],
+      ["side", off.x + contentW - 50, "green"],
+      ["outer", off.x + contentW / 2, "gray"],
+    ];
+  }
+  return [
+    ["top", off.x + contentW / 2, "gray"],
+    ["widget", VIEW_W - 50, "yellow"],
+    ["nav", 180, "orange"], // SIDEBAR の文字を避けた右寄りの列
+    ["status", 100, "blue"],
+  ];
 }
 
 // --remote-debugging-port=0 で起動すると、実際に使ったポートがこのファイルに書かれる。
@@ -366,12 +419,17 @@ async function withBrowser(ext, fn) {
         );
 
         const warn = await result.textContent("#warn");
+        const kindNote = {
+          document: warn === "",
+          iframe: warn.includes("iframe"),
+          element: warn.includes("スクロール領域"),
+        };
         report(
           `[${scenario.name}] スクロール対象を ${scenario.kind} と判定`,
-          scenario.kind === "iframe" ? warn.includes("iframe") : warn === "",
+          kindNote[scenario.kind],
           `warn="${warn}"`,
         );
-        if (scenario.kind === "iframe") {
+        if (scenario.kind !== "document") {
           report(
             `[${scenario.name}] 連写へ切り替えた理由が表示される`,
             warn.includes("高速モードが使えず"),
@@ -380,25 +438,36 @@ async function withBrowser(ext, fn) {
         }
         await checkImage(result, scenario);
 
-        const restored = await page.evaluate(() => {
+        // 撮影で触ったスタイルとスクロール位置が元に戻っているか。
+        // 期待値は各要素の元の状態 (fixed のまま・見えるまま・top は 0px のまま)。
+        const restored = await page.evaluate((fixture) => {
+          const style = (doc, id) => getComputedStyle(doc.getElementById(id));
+          if (fixture === "sidebar") {
+            return {
+              scrollY: document.getElementById("main").scrollTop,
+              styleTag: !!document.getElementById("__fpc-style"),
+              navVis: style(document, "nav").visibility,
+              widgetVis: style(document, "widget").visibility,
+            };
+          }
           const doc =
             document.querySelector("iframe")?.contentDocument ?? document;
           const scroller = doc.scrollingElement || doc.documentElement;
           return {
             scrollY: scroller.scrollTop,
             styleTag: !!doc.getElementById("__fpc-style"),
-            headPos: getComputedStyle(doc.getElementById("head")).position,
-            footVis: getComputedStyle(doc.getElementById("foot")).visibility,
-            sideTop: getComputedStyle(doc.getElementById("side")).top,
+            headPos: style(doc, "head").position,
+            footVis: style(doc, "foot").visibility,
+            sideTop: style(doc, "side").top,
           };
-        });
+        }, scenario.fixture);
+        const expectedRestore =
+          scenario.fixture === "sidebar"
+            ? { scrollY: 0, styleTag: false, navVis: "visible", widgetVis: "visible" }
+            : { scrollY: 0, styleTag: false, headPos: "fixed", footVis: "visible", sideTop: "0px" };
         report(
           `[${scenario.name}] 撮影後にページが復元される`,
-          restored.scrollY === 0 &&
-            !restored.styleTag &&
-            restored.headPos === "fixed" &&
-            restored.footVis === "visible" &&
-            restored.sideTop === "0px",
+          JSON.stringify(restored) === JSON.stringify(expectedRestore),
           JSON.stringify(restored),
         );
 

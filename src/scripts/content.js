@@ -144,6 +144,12 @@
     };
   }
 
+  const overlaps = (rect, clip) =>
+    rect.right > clip.x &&
+    rect.left < clip.x + clip.w &&
+    rect.bottom > clip.y &&
+    rect.top < clip.y + clip.h;
+
   function injectStyle(doc) {
     const style = doc.createElement("style");
     style.id = STYLE_ID;
@@ -187,6 +193,9 @@
       const rect = el.getBoundingClientRect();
       if (rect.width === 0 || rect.height === 0) continue;
       if (rect.width >= vw * 0.9 && rect.height >= vh * 0.9) continue;
+      // スクロール領域の外にある固定要素(左のサイドバーなど)は撮影中も動かず、
+      // 結果ページが1枚目から周囲として切り出す。隠すと周囲ごと消えてしまう。
+      if (doc === document && target.host && !overlaps(rect, clip)) continue;
 
       // サイトのヘッダー/ナビは「最上端に貼り付いた横長の帯」という形をしている。
       // これを満たすものだけをヘッダー扱いし、宙に浮くチャットウィジェットやCookieバーは除く。
@@ -241,6 +250,8 @@
       // デバイスピクセル比の算出に使う。撮影画像はビューポート全体なので、
       // コンテナの幅ではなくウィンドウの幅と比べる必要がある。
       windowW: document.documentElement.clientWidth,
+      // スクロール領域の外(サイドバーやヘッダー)も含めて1画面ぶんを合成するのに使う。
+      windowH: document.documentElement.clientHeight,
       title: document.title,
       url: location.href,
     };
